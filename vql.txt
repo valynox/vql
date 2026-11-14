@@ -9,6 +9,7 @@ Conventions: X = any numeric unit (not BOOL, not CODE). lb+N = adds N days of wa
 
 - One grammar, four jobs: search (score formulas, higher ranks first; `formulas`, `trees_from`, section 10), backtest (`portfolio={...}`), screening (`screen_*`, metrics, section 11), checks (`checks`, `apx.check.v1`, section 11).
 - Three name layers: atom (`LAG`, `WSUM`, `GT`), reserved function (built from atoms; `RET` = `apx.RET`), user function (`user.<author>.NAME`, stored with `my_stock_strategies_change action=install`).
+- Data (obtained from outside, one set per market) is not a layer of computation: columns (section 7), the parent id `PARENT_ID(L)`, and 5 derived financial ratios (section 7, `FN_EP` etc.; noun list level `data`).
 - No technical-indicator operators (RSI, MACD, Bollinger): build them from atoms as user functions.
 - No node-count rule; one technical limit (section 13). Sectors/themes = correlation baskets (section 6) or class nouns `cls.NAME()` (section 8), never a hand-made list.
 - Values in generation / backtest / stock pool: i64 fixed point, bit-identical every run.
@@ -33,7 +34,7 @@ x in {v, ...}   BOOL, one node  (x invalid -> invalid)
 
 Precedence low to high: `?:` < `||` < `&&` < `== !=` < `> < >= <= in` < `+ -` < `* / %` < unary `- !`. Left-associative. Parentheses group. `&&` and `||` do not short-circuit: an invalid side makes the result invalid.
 
-Constants: `0.5:RATIO`, `20:DAYS`, `1:COUNT`, `0:PRICE`. A number without a unit takes the other side's unit (`close > 100`, `close / LAG(20, close) > 1.1`); as a bare multiplier or divisor it is RATIO. Scientific notation works (`5e9`). Large constants: 7 significant digits x 10^0..12.
+Constants: `0.5:RATIO`, `20:DAYS`, `1:COUNT`, `0:PRICE`. A number without a unit takes the other side's unit (`close > 100`, `close / LAG(20, close) > 1.1`, `CLIP(close, 10, 100)`, `close + LAG(1, 5)`); as a bare multiplier or divisor it is RATIO. Scientific notation works (`5e9`). Large constants: 7 significant digits x 10^0..12.
 
 Code columns `industry`, `market`, `common`, `symbol` (unit CODE): only `==`, `!=`, `in {...}`, or a group key. `market in {TW, TWO}`, `symbol in {"2330", "2317"}`, `industry in {24, 28}`. Accepted in conditions and in score formulas (there it becomes a BOOL column, part of the library identity). In a score formula the industry group key is `PARENT_ID(1)`.
 
@@ -91,9 +92,9 @@ EV_CHANGE(x)  1 on the day the value changes, always valid
 
 Invalid cell: score formula = not ranked; stock pool / `hold` = out; `weight` = not bought. `!(cond)` drops cells where cond is invalid; `!FILL(cond, 0:BOOL)` keeps them.
 
-4. Operators (all 192)
+4. Operators (201; the 5 derived-data ratios are in section 7)
 
-Layer: `a` atom (smallest, implemented by the engine), `r` reserved (built from atoms; every one has its bit-identical atom definition in section 5). Levels `L`: 0 whole pool, 1 industry, 2 market, 3 country, 4 global. Window N includes today. Cross-section / group members = in the stock pool that day and input valid.
+Layer: `a` atom (smallest, implemented by the engine), `r` reserved (built from atoms; every one has its bit-identical atom definition in section 5), `d` data (obtained from outside, not a computation). Levels `L`: 0 whole pool, 1 industry, 2 market, 3 country, 4 global. Window N includes today. Cross-section / group members = in the stock pool that day and input valid.
 
 Element-wise:
 
@@ -121,10 +122,13 @@ WDROP(N,x) a N2..1260  max ordered drop >=0 EMA(N,x) a N2..84 lb+3N-1
 RET(N,x) r N1..1260 x[t]/x[t-N]-1           RET_SKIP(N,M,x) r N2..1260 1<=M<N  x[t-M]/x[t-N]-1
 RVOL(N,x) r N2..252 std of log returns      PARK(N,high,low) a N2..252
 GK(N,high/low,close/open) a N2..252 (RATIO,RATIO)
-SKEW(N,x) a N3..252   KURT(N,x) a N4..252 (excess)   ACORR(N,k,x) a N3..252 1<=k<=N-2
+SKEW(N,x) r N3..252   KURT(N,x) r N4..252 (excess)   ACORR(N,k,x) r N3..252 1<=k<=N-2   (of log returns)
+WSKEW(N,x) a N3..252   WKURT(N,x) a N4..252   WACORR(N,k,x) a N3..252 1<=k<=N-2   (of x itself, any series; constant -> invalid)
 SLOPE(N,x) a N2..252 ->X per day   R2(N,x) a N3..252   MAXDD(N,x) a N2..252 positive
 DIST_HIGH(N,x) r N2..1260 <=0   DIST_LOW(N,x) r N2..1260 >=0
 UP_STREAK(N,x) r N1..252 ->COUNT capped at N   DOWN_STREAK(N,x) r
+WREG(N,mode,y,x) a N3..1260 regression of y on x: mode 0 slope, 1 intercept, 2 today residual, 3 R2, 4 t-stat; (X,X) same unit -> RATIO (1, 2: unit of y); x constant -> invalid; write it by name (REG_*, below)
+INV_VOL_KEY(N,x) a N2..1260 RATIO->COUNT weight key = floor(2^30 / vol), vol = floor(sqrt(sum x^2 / k) / 10) in 1e-5 clamped 1..65535 over the k valid cells; k < N/2 -> invalid. inv_vol weighting = INV_VOL_KEY(20, RET(1, close))
 CORR(N,a,b) a N3..252   VOL_RATIO(N,x) r N1..252  x[t] / mean of previous N days
 AMIHUD(N,price,money) a N1..252 (X,MONEY)   BETA(N,a,b) a N3..252   RESID_MOM(N,a,b) a N3..252
 
@@ -145,7 +149,7 @@ Cross-section (same day, inside the pool):
 CS_PCT(x) r ->RATIO 0..1 (<2 members invalid)   CS_Z(x) a   CS_WINZ(k,x) r k5..100 clip at +-k/10 sd
 CS_QCUT(N,x) r N2..100 ->COUNT bucket 0..N-1    CS_RANK_CHG(N,x) r N1..250   CS_RANK_MEAN(N,x) r N2..250
 CS_RANKMIX(L,flags,a,b) r L0..4 flags0..3 (1 invert a, 2 invert b, 3 both) ->RATIO 0..2
-CS_REL_RET(N,L,x) r N1..252 L0..4   CS_NEUTRAL_IND(L,x,w) a L1..4   CS_NEUTRAL_SIZE(x,z) a
+CS_REL_RET(N,L,x) r N1..252 L0..4   CS_NEUTRAL_IND(L,x,w) r L1..4   CS_NEUTRAL_SIZE(x,z) r =GRESID(0,x,z)
 CS_NEUTRAL_COUNTRY(x,w) r   CS_NEUTRAL_MODEL(p,x,q) a  (needs risk-model columns; not on production panels)
 
 Groups:
@@ -154,13 +158,16 @@ GSUM(L,x) a L0..4 BOOL->COUNT   GCOUNT(L,x) a ->COUNT   GRANK(L,x) a ->COUNT 2*l
 GMAX(L,x) a   GMIN(L,x) a  (no BOOL)
 GSTD(L,x) a L0..4  population std of the group (ROLL_STD arithmetic); <2 members invalid; all equal -> 0
 GSUM_BY(k,x) GCOUNT_BY(k,x) GRANK_BY(k,x) GMAX_BY(k,x) GMIN_BY(k,x) GSTD_BY(k,x) a   key units CODE|COUNT|BOOL|DAYS; write GSUM(k, x)
-GMEAN_BY(k,x) a  group mean by key, any unit, 1 member counts (level form = XL_PARENT)
+GMEAN_BY(k,x) a  group mean; k = level 0..4 or key (as GSUM); any unit, 1 member counts; XL_PARENT(L,x) and GMEAN(L,x) = the same tree
+GWMEAN_BY(k,w,x) a  weighted group mean; k as GMEAN_BY; member needs w > 0; sw=max(0,bitlen(max w)-20), sx=max(0,bitlen(max|x|)+20+bitlen(n)-62), floor(sum((w>>sw)(x>>sx))/sum(w>>sw))*2^sx, always valid for members; GWMEAN(L,w,x) L1..4 = the same tree as GWMEAN_BY(PARENT_ID(L),w,x)
 ORD(k,x) a (key,X)->COUNT exact position in the key's group, 0 = largest, each group 0..n-1; ties by a fixed shuffle (same as the pick ranks); k = level 0..4 (0 whole market) or key; one member -> 0. Top 3 per industry: GTOP(3, 1, x)
-PARENT_ID(L) a L1..4 ->CODE, group key only
+GQUANT(q,first,x) a q0..100 first as GSUM (level or key): floor(q*(n-1)/100)-th smallest in group (as WQUANT); 50 median, 0 GMIN, 100 GMAX; no BOOL
+GRESID(k,x,z) a (key,X,any number)->X  least-squares residual of x on [1,z] within k's group (k = level 0..4 or key, as GSUM); 1 member -> 0; x - group mean past i64 -> group invalid
+PARENT_ID(L) d L1..4 ->CODE, group key only
 GSUM_ALL(L,x) a  GCOUNT_ALL(L,x) a   members = every stock with x valid, stock pool NOT applied; written to every cell of the group; L=0 same value for every stock
 CS_PEER_RANK(L,x) r L1..4 ->RATIO   CS_PEER_Z(L,x) a   CS_REL_PARENT(L,x) r  x - group mean   XL_PARENT(L,x) a  group mean
 
-Group idioms: percentile in group `RATIO(GRANK(k, x), ADD(SUB(GCOUNT(k, x), 1:COUNT), SUB(GCOUNT(k, x), 1:COUNT)))`; mean in group `GMEAN_BY(k, x)`; z-score in group `MASK(GSTD(k, x) > 0, RATIO(SUB(x, GMEAN_BY(k, x)), GSTD(k, x)))`. Keys: `PARENT_ID(1)`, `CS_QCUT(5, ROLL_MEAN(20, volume))`, `close > open`, `MONTH()`, `0:COUNT` (one group), `CORR_GROUP(...)`. Do not rank by the percentile inside a group (every group's best ties at 1); rank by `x - group mean`; if you must (e.g. `CS_PEER_RANK(1, x)`), add `portfolio.tie_by` = the ranked value.
+Group idioms: above the industry median `close > GQUANT(50, 1, close)`; minus the group median `x - GQUANT(50, k, x)`; percentile in group `RATIO(GRANK(k, x), ADD(SUB(GCOUNT(k, x), 1:COUNT), SUB(GCOUNT(k, x), 1:COUNT)))`; mean in group `GMEAN(k, x)`; cap-weighted mean in group `GWMEAN(k, fund.mktcap, x)`; z-score in group `GZ(k, x)`; size-neutral in industry `GRESID(1, x, LOG(fund.mktcap))`. Keys: `PARENT_ID(1)`, `CS_QCUT(5, ROLL_MEAN(20, volume))`, `close > open`, `MONTH()`, `0:COUNT` (one group), `CORR_GROUP(...)`. Do not rank by the percentile inside a group (every group's best ties at 1); rank by `x - group mean`; if you must (e.g. `CS_PEER_RANK(1, x)`), add `portfolio.tie_by` = the ranked value.
 
 Events:
 
@@ -169,12 +176,10 @@ EV_PULSE(col) r  column has a value today (event columns: ex-dividend)
 EV_POST_N(N,b) r N1..250   EV_DAYS_SINCE(N,b) r N1..250 ->DAYS (none within N: invalid)
 EV_EARN_DRIFT(N,price,col) r N1..252   EV_IDX_CHG(N,memberBOOL) r N1..252 ->RATIO -1..1
 
-Fundamentals:
+Fundamentals with a window (`FN_PS FN_EP FN_BP FN_ROE FN_ACCRUAL` are data: section 7):
 
-FN_PS(total,shares) r (MONEY,QTY)->MONEY   FN_EP(eps,price) r 4*e/p   FN_BP(bookPerShare,price) r
-FN_ROE(netIncome,equity) r 4*ni/eq         FN_YOY(N,x) r N1..1260 ln(x[t]/x[t-N])
-FN_EGROW(N,x) r N1..252 (x-x[t-N])/|x[t-N]|   FN_GM_CHG(N,gross,revenue) r   FN_ACCRUAL(N,accrual,assets) a
-FN_DY(N,dps,price) r N1..252  first input = per-share dividend event column
+FN_YOY(N,x) r N1..1260 ln(x[t]/x[t-N])     FN_EGROW(N,x) r N1..252 (x-x[t-N])/|x[t-N]|
+FN_GM_CHG(N,gross,revenue) r               FN_DY(N,dps,price) r N1..252  first input = per-share dividend event column
 
 `FN_EP`, `FN_BP`, `FN_DY` need a per-share first input (`eps`, `dps`, `FN_PS(...)`); a company total against a per-share value is rejected. Total vs market cap: `RATIO(total, fund.mktcap)`.
 
@@ -195,14 +200,15 @@ Visibility:    VG_IRREV fx | VG_IRREV_SKEW fx | VG_DEGREE fx | VG_DEGREE_BIAS fx
 
 Meanings: `stock_formula_help topic=noun name=<NAME>`. E.g. `NEG(LZ_C_DIFF(60, close))`, `MUL(LZ_ORDERED_DIFF(60, 80, close), RET(20, close))`, `MASK(LZ_LEADS_DIFF(60, 80, close, volume), RET(20, close))`.
 
-Three- and four-input atoms `SELECT(c,a,b)`, `REC2`, `STATESCAN`: not accepted in formula text (`APX_UNSUPPORTED`); write `c ? a : b`.
+`STATESCAN(x, up, lo)` (three inputs, same numeric unit -> X): per symbol along days; first day = up (state up); up: x < prev -> down, value lo, else max(prev, up); down mirrors (x > prev -> up, value up, else min(prev, lo)); any input invalid -> invalid, restart. Trailing stop: `STATESCAN(close, ROLL_MAX(20, close) * 0.9, ROLL_MIN(20, close) * 1.1)`. `SELECT(c,a,b)` r -> write `c ? a : b`; four-input `REC2` not accepted (`APX_UNSUPPORTED`).
 
 5. Reserved functions as atoms
 
-Every reserved function has a bit-identical atom definition (38; value, valid bits, unit). `[when: ...]` = bit-identical within that range.
+Every reserved function has a bit-identical atom definition (36; value, valid bits, unit). Calculator keys other atoms build (`OR MAX2 MIN2 SELECT DIFF COUNT MOD ROUND CEIL`) are reserved. `[when: ...]` = bit-identical within that range.
 
 DIFF(N,x) = SUB(x, LAG(N,x))                      OR(a,b) = NOT(MUL(NOT(a), NOT(b)))
 MAX2(a,b) = FILL(MASK(GT(a,b), a), MASK(VALID(a), b))   MIN2: LT instead of GT
+SELECT(c,a,b) = c ? a : b = FILL(MASK(c,a), MASK(NOT(c),b))
 ROLL_RANK(N,x) = RATIO(WRANK(N,x), 2*(N-1):COUNT)
 CS_PCT(x) = RATIO(GRANK(0,x), MUL(2:RATIO, SUB(GCOUNT(0,x), 1:COUNT)))     CS_PEER_RANK(L,x): same with L
 CS_REL_PARENT(L,x) = SUB(x, XL_PARENT(L,x))        CS_RANK_CHG(N,x) = SUB(CS_PCT(x), LAG(N, CS_PCT(x)))
@@ -216,8 +222,7 @@ FN_YOY(N,x) = LOGR(x, LAG(N,x))                    COUNT(N,b) = WSUM(N,b)
 FIRST_IN_WINDOW(N,b) = MUL(b, LT(WSUM(N-1, LAG(1,b)), 1:COUNT))   [when: b strictly 0/1]
 EV_POST_N(N,b) = LAG(N,b)                          EV_PULSE(c) = VALID(c)   [when: c a column]
 RVOL(N,x) = ROLL_STD(N, LOGR(x, LAG(1,x)))
-FN_PS(a,b) = MASK(GT(b,0), RATIO(a,b))             FN_BP(a,b) = MASK(MUL(GT(a,0), GT(b,0)), RATIO(a,b))
-FN_EP(a,b) = FN_ROE(a,b) = MASK(GT(b,0), MULDIV(4, a, b))
+SKEW(N,x) = WSKEW(N, LOGR(x, LAG(1,x)))   KURT: WKURT   ACORR(N,k,x) = WACORR(N, k, LOGR(x, LAG(1,x)))
 FN_DY(N,a,b) = MASK(GT(b,0), RATIO(WSUM(N, FILL(a, 0:MONEY)), b))     [when: a >= 0]
 FN_EGROW(N,x) = RATIO(SUB(x, LAG(N,x)), ABS(LAG(N,x)))
 FN_GM_CHG(N,a,b) = DIFF(N, MASK(GT(b,0), RATIO(a,b)))
@@ -228,13 +233,16 @@ UP_STREAK(N,x): c = FILL(GT(x, LAG(1,x)), 0:BOOL); MASK(MUL(VALID(x), VALID(LAG(
 EV_EARN_DRIFT(N,a,b): e = EV_CHANGE(b); base = LATCH(e, LAG(1,a)); s = SUB(SCANSUM(e, 1:DAYS), 1:DAYS); MASK(MUL(GT(base,0), LT(s, N:DAYS)), RATIO(SUB(a, base), base))
 EV_IDX_CHG(N,b): e = EV_CHANGE(b); s as above; m = RATIO(SUB(N:DAYS, s), N:DAYS); MASK(VALID(WSUM(N+1, b)), FILL(MASK(LT(s, N:DAYS), FILL(MASK(b, m), MASK(NOT(b), NEG(m)))), 0:RATIO))   [when: b 0/1]
 CS_NEUTRAL_COUNTRY(a,b) = CS_NEUTRAL_IND(3, a, b)
+GWMEAN(L,w,x) = GWMEAN_BY(PARENT_ID(L), w, x)
+CS_NEUTRAL_IND(L,a,b) = SUB(a, GWMEAN(L, b, a))
+CS_NEUTRAL_SIZE(a,b) = GRESID(0:COUNT, a, b)
 VOL_RATIO(N,x): s = WSUM(N, LAG(1,x)); MASK(GT(s,0), MULDIV(N, x, s))   [when: x >= 0]
 
 `RET`, `RET_SKIP`, `DIST_HIGH`, `DIST_LOW`, `FN_YOY` with N > 252 (up to 1,260) are expanded into their atom definition when the formula is read (nodes count as expanded); same definition and result for any N.
 
 `ADD` / `SUB` / `DIFF` past i64 -> invalid, same as the reserved function; `MULDIV` multiplies in 128 bits, so no overflow conditions. `EV_DAYS_SINCE`, `EV_EARN_DRIFT` declare a warm-up of N days; their atom forms 0 / 1 day, same cell values.
 
-Atoms formerly listed as reserved (22; names, parameters, results unchanged): `ROLL_MEAN XL_PARENT ROLL_STD CORR SLOPE R2 MAXDD SKEW KURT ACORR BETA RESID_MOM CS_Z CS_PEER_Z CS_NEUTRAL_IND CS_NEUTRAL_SIZE CS_NEUTRAL_MODEL AMIHUD PARK GK FN_ACCRUAL EMA`. A mean and a sum are each a smallest unit; the others are window or cross-section statistics fused into one rounding.
+Atoms formerly listed as reserved (16; names, parameters, results unchanged): `ROLL_MEAN XL_PARENT ROLL_STD CORR SLOPE R2 MAXDD BETA RESID_MOM CS_Z CS_PEER_Z CS_NEUTRAL_MODEL AMIHUD PARK GK EMA`. A mean and a sum are each a smallest unit; the others are window or cross-section statistics fused into one rounding. Atom spellings, bit-identical and as fast: `CS_Z(x) = RATIO(SUB(x, GMEAN_BY(0:COUNT,x)), GSTD(0,x))`, `CS_PEER_Z(L,x) = RATIO(SUB(x, XL_PARENT(L,x)), GSTD(L,x))`.
 
 Expanded at text level (count as atoms in the node total):
 
@@ -250,13 +258,16 @@ EW_INDEX(p) = EXP(SCANSUM(DAY_INDEX() < 1, FILL(LOG(1 + MKT_MEAN(MASK(common == 
 GPCT(g,x) = RATIO(GRANK(g,x), ADD(SUB(GCOUNT(g,x), 1:COUNT), SUB(GCOUNT(g,x), 1:COUNT)))   percentile in group 0..1; g level or key
 GTOP(N,first,x) = ORD(first,x) < N   top N per group, exactly N (fixed tie shuffle); first = level 0..4 or key
 CS_TOPK(k,x) = ORD(0,x) < k          top k of the stock pool that day, exactly k
+INV_VOL_KEY() = INV_VOL_KEY(20, RET(1, close))   inverse-volatility weight key (the inv_vol weighting); same name as the atom, zero arguments
+GZ(first,x) = RATIO(SUB(x, GMEAN_BY(first,x)), GSTD(first,x))   z-score in group; first = level (0 = CS_Z, 1..4 = CS_PEER_Z) or key
+REG_SLOPE / REG_INTERCEPT / REG_RESID / REG_R2 / REG_T (N,y,x) = WREG(N, 0 / 1 / 2 / 3 / 4, y, x)   e.g. REG_SLOPE(60, RET(1, close), MKT_MEAN(RET(1, close)))
 
-Common combinations (each expands to atoms, `apx.NAME` = `NAME`; inputs marked X share one unit, so `CLIP(close, 10, 100)` reads 10 and 100 as PRICE; `k` = a unitless level 0..4 or a group key, as in GSUM):
+Common combinations (each expands to atoms, `apx.NAME` = `NAME`; `k` = a unitless level 0..4 or a group key, as in GSUM):
 
 STREAK(b) = SCANSUM(NOT(b), MUL(b, 1:COUNT))                  days b true in a row (0 on a false day); invalid before the first false and after an invalid b until the next false
 SINCE(b) = SCANSUM(b, 1:DAYS) - 1:DAYS                         days since b was true (0 that day); invalid before the first true and after an invalid b until the next true
 STATE(on,off) = LATCH(on || off, MUL(on, 1:COUNT)) > 0:COUNT   true from an on day, false from an off day, held; both = true; invalid before the first signal
-GMEAN(k,x) = RATIO(GSUM(k,x), GCOUNT(k,x))                     group mean inside the pool, floored; COUNT x -> RATIO
+GMEAN(k,x) = GMEAN_BY(k,x); COUNT x: GMEAN_BY(k, RATIO(x, 1:COUNT))   group mean inside the pool, floored; COUNT x -> RATIO (not the same tree as XL_PARENT then)
 GDEMEAN(k,x) = MASK(GCOUNT(k,x) > 1:COUNT, x - GMEAN(k,x))     x minus group mean; group of one -> invalid; x a x1e6 unit
 MKT_SHARE(b) = MKT_MEAN(MASK(common == 1, MUL(b, 1:RATIO)))    share 0..1 of common stocks with b true (b valid ones), same value for every stock
 MKT_COUNT(b) = GSUM_ALL(0, MASK(common == 1, b))                number of common stocks with b true, same value for every stock
@@ -265,11 +276,12 @@ CLIP(x,lo,hi) = MAX2(MIN2(x, hi), lo)                          BETWEEN(x,lo,hi) 
 SIGN(x) = MUL(x > 0, 1:COUNT) - MUL(x < 0, 1:COUNT)            -1 / 0 / 1 (COUNT)
 CROSS_UP(a,b) = a > b && !(LAG(1,a) > LAG(1,b))                CROSS_DOWN(a,b) = a < b && !(LAG(1,a) < LAG(1,b))
 MONTH_START() = MDAY() < LAG(1, MDAY())                        QUARTER_START() = MONTH_START() && (MONTH() - 1) % 3 == 0     YEAR_START() = MONTH() < LAG(1, MONTH())
+EVERY(n, k) = MOD(DAY_INDEX(), n) == k                          every n days offset k, counted from the panel's first day (portfolio apx.EVERY(n), one argument = rebalance_days)
 PREV_MONTH_RET(p) = RATIO(AT_MONTH_START(LAG(1,p)), AT_MONTH_START(LAG(1, AT_MONTH_START(LAG(1,p))))) - 1   last calendar month's return, same all month
 ROLL_MEAN_AVAIL(N,x) = RATIO(WSUM(N, FILL(x, 0)), WSUM(N, VALID(x)))   N 1..1260; mean over valid days in the window; all invalid -> invalid
 VWAP(N) = RATIO(WSUM(N, px.turnover), WSUM(N, volume))         N 1..1260; MONEY per share (unadjusted: compare with raw.close)
 
-`MKT_MEAN`, `EW_INDEX`, `MKT_SHARE`, `MKT_COUNT`, `BASKET_MEAN`, `MONTH_START`, `QUARTER_START`, `YEAR_START` are market-wide: usable in `exposure` and `rebalance_when`. Highest close since listing: `SCANMAX(LISTED_DAYS() == 1 && VALID(close), FILL(close, 0:PRICE))`.
+`MKT_MEAN`, `EW_INDEX`, `MKT_SHARE`, `MKT_COUNT`, `BASKET_MEAN`, `MONTH_START`, `QUARTER_START`, `YEAR_START`, `EVERY` are market-wide: usable in `exposure` and `rebalance_when`. Highest close since listing: `SCANMAX(LISTED_DAYS() == 1 && VALID(close), FILL(close, 0))`.
 
 6. Similarity (derived columns; only data before each period)
 
@@ -302,6 +314,14 @@ raw.*                   one row late: raw.close on panel day t = previous tradin
 
 `close open high low` are adjusted prices. Publication day of a carried column = `EV_CHANGE(col)`; windows by period = `RWIN`. `eps` = average single-quarter EPS over the last four quarters.
 
+Derived data (5 financial ratios from data columns; written as calls, names and results unchanged; noun list level `data`). `=` gives the bit-identical atom form:
+
+FN_EP(eps,price)             earnings yield = 1/(P/E): 4*e/p      = MASK(GT(b,0), MULDIV(4, a, b))
+FN_BP(bookPerShare,price)    1/(P/B)                              = MASK(MUL(GT(a,0), GT(b,0)), RATIO(a,b))
+FN_PS(total,shares)          per-share value (MONEY,QTY)->MONEY   = MASK(GT(b,0), RATIO(a,b))
+FN_ROE(netIncome,equity)     return on equity: 4*ni/eq            = MASK(GT(b,0), MULDIV(4, a, b))
+FN_ACCRUAL(N,accrual,assets) accrual ratio, N1..252: 4*a / mean(assets today, N days ago); one rounding, no atom form
+
 8. Stock pool
 
 `stock_backtest universe="<BOOL per day and stock>"`. Invalid cells (warm-up included) are out. Cross-section members inside the condition = the pool before the filter. One library = one pool. Omitted = all common stocks (`common_only` default true). Do not add conditions the user did not state (no default liquidity or listing-age filter). At most 20 listed symbols; beyond that use a class noun or a seed basket.
@@ -326,6 +346,7 @@ Class nouns (conditions only): `cls.FIN() cls.SEMI() cls.TECH() cls.COMM() cls.H
 跟這幾檔表現相近                GSUM(CORR_GROUP(RATIO(close, LAG(1, close))), symbol in {"2330", "2382", "3231"}) > 0
 
 `universe_lang` 0 auto / 1 old form (`fund.mktcap >= quantile(fund.mktcap, 0.7)`) / 2 VQL. Write VQL.
+The old form is translated to VQL at compile time (one evaluation path): cross-unit arithmetic is converted to ratios first, an outermost division in a comparison is cross-multiplied (zero denominator = false), values above about 9.2e12 inside such arithmetic are invalid; `sd`, `var`, `pow`, non-integer-percentile `quantile` return `E_OLD_SYNTAX`.
 
 9. Backtest: `portfolio={...}`
 
@@ -340,18 +361,18 @@ exposure          RATIO 0..1, one value per day for the market  total exposure i
 weight            number per day and stock          weight = value / sum over selected names (bp); <= 0 or missing = not bought
 tie_by            number per day and stock          top-N ties: larger first, missing last, then mix64((entity_id<<32)^day), then symbol index; only orders ties
 group_by          formula per day and stock (number or BOOL), no pos.*   same value on a day = one group; always with group_cap
-group_cap         1..255       at most N holdings per group: rank order, a full group is skipped; holdings count; hold_days: per tranche
+group_cap         >= 1         at most N holdings per group: rank order, a full group is skipped; holdings count; hold_days: per tranche
 add_when          BOOL, may use pos.* and pos.size pos.adds pos.cuts pos.avg_ret   add once when it turns true (next fill)
 cut_when          BOOL, same     sell cut_size of the position once when it turns true
 add_size          > 0, default 1 (entry units)    cut_size 0<x<1, default 0.5    size_init 0.01..1, default 1    max_size >= 1 (entry units)
 gross_max         0.01..2, default 1 (> 1 margin, needs margin_rate)   cash_min 0..0.99   add_mode cash|scale   max_new >= 1   cash_rate   margin_rate
 exit_when         BOOL, may use pos.*                checked at every close; sold at the next fill; that share stays in cash until the next rebalance
 keep_when         BOOL, may use pos.* and pos.rank   on rebalance days, holdings for which it is true stay
-exit_below        PRICE level, may use pos.entry / pos.peak   sold intraday when the low touches it (gap: at the open); 1-3 terms, MAX2
-exit_above        PRICE level, same                     sold intraday when the high touches it; 1-3 terms, MIN2
+exit_below        PRICE level, may use pos.entry / pos.peak   sold intraday when the low touches it (gap: at the open); terms joined by MAX2
+exit_above        PRICE level, same                     sold intraday when the high touches it; terms joined by MIN2
 lock              limit|none   omitted: simulated when the panel has raw.high/raw.low/raw.limit_up/raw.limit_down (plan says limit / none / unavailable)
 reentry_days      0..10000     no buy-back within N trading days after an exit_when or touch exit
-grid              {name: [values] | {"from":, "to":, "step":}}   numbers written $name in exit_when / keep_when / exit_below / exit_above are tried over these values (one shared grid); <= 4 names, 1..16 values each, <= 64 sets; no window lengths
+grid              {name: [values] | {"from":, "to":, "step":}}   numbers written $name in exit_when / keep_when / exit_below / exit_above are tried over these values (one shared grid); base-grid settings x sets <= 32,767; no window lengths; also the base grid: pl / reb / n / wk (below)
 grid_by           screening expression (the ordering)   orders a formula's combinations, larger first; with grid default apx.SHARPE and one set kept per portfolio setting; without grid it orders the portfolio settings
 initial_capital   1..1e12      default 1000000; with lot / min_fee / contribution adds a share-level account
 lot               odd|board    default odd
@@ -363,7 +384,7 @@ contribution_every month|rebalance   default month
 - Expression arguments accept `"expr"` or `{"expr": "...", "label": "one plain sentence for the user"}`.
 - `rebalance_when` / `exposure` must be market-wide (calendar, `idx.*`, `MKT_MEAN`, `EW_INDEX`); otherwise `E_NOT_MARKET_WIDE`.
 - State leaves: `pos.ret` (return since the entry fill, adjusted, costs excluded), `pos.peak_ret` (highest closing `pos.ret`), `pos.drawdown` (1 - value / best closing value), `pos.days` (closes since entry), `pos.rank` (place among candidates, 1 = best; `keep_when` only), `pos.held` (true).
-- `pos.*` only inside comparisons `> >= < <=`: one side linear in them (coefficients within +-100), the other a constant or a market-only expression; comparisons joined with `&& || !`; at most 6 per rule.
+- `pos.*` only inside comparisons `> >= < <=`: one side linear in them (coefficients within +-100), the other a constant or a market-only expression; comparisons joined with `&& || !`.
 - Fills: selection after the close of the decision day, filled at the next open. Costs: buy 0.1425%, sell 0.1425% + tax 0.3% (ETF tax 0.1%); override with `config` `fee_bp_x100` / `tax_sell_bp_x100` / `tax_sell_etf_bp_x100`.
 - Selection: candidates = in pool, score valid, pass `hold`; top `max_positions` by exact rank (one distinct position per stock per day): larger score -> larger `tie_by` (missing last) -> larger `mix64((entity_id<<32)^day)` -> smaller stock index. Never depends on codes or column order. With massive ties (bucket numbers, percentile inside a group) the shuffle picks: use continuous scores or give `tie_by`. `CS_PCT` / `pos.rank` ignore `tie_by`.
 - Period (top-level `stock_backtest`): `backtest_from` / `backtest_to` (`YYYY-MM-DD`, `YYYY-MM`, `YYYY`) or `backtest_years`; earlier data only warms up; one library = one period.
@@ -411,20 +432,23 @@ contribution_every month|rebalance   default month
 
 Backtest rules as formulas (the arguments above are shorthand; plan maps these back, bit-identical):
 
-weight            product of factors; exactly one apx.SHARE(apx.PICK(N, keep[, max_new]), key)
-                  key: 1 equal | apx.RANK_KEY() | apx.INV_VOL_KEY() | market formula      apx.CAP(c, apx.SHARE(...)) = max_weight c*100
-                  (expo) * ...  exposure | 0.8 * ...  gross_max<=1 | (1 - c) * ... cash_min | MIN2(1, g / acct.gross_req) gross_max>1
+weight            product of factors; exactly one apx.SHARE(apx.PICK(N, keep[, max_new[, turnover]]), key)   max_new 0 = no limit; turnover T: new names <= floor(T x names held) = config.max_turnover_bp T*10000
+                  key: 1 equal | apx.RANK_KEY() | apx.RANK_KEY(p) | apx.INV_VOL_KEY() | market formula | $wk == 0 ? 1 : apx.INV_VOL_KEY()      apx.CAP(c, apx.SHARE(...)) = max_weight c*100
+                  (expo) * ...  exposure | 0.8 * ...  gross_max<=1 | (1 - c) * ... cash_min | MIN2(1, g / acct.gross_req) gross_max>1 (add term not wrapped: add_mode scale; g 1 = scale without margin)
                   !(pos.held && FILL(cond, false))                                       exit_when
                   !(pos.held && FILL(TOUCH_BELOW(lv) || TOUCH_ABOVE(lv), false))         exit_below / exit_above
                   FILL([MIN2(max, ]pos.size + a * (A && !FILL(LAG(1, A), false) && !W)[)][ * (1 - c * (C && !FILL(LAG(1, C), false) && !W))], init)
                                                                                          add_when/add_size/cut_when/cut_size/size_init/max_size; W = rebalance_when text
+                  pos.size + MIN2(a * (A ...), acct.room)                                adds beyond the cap use only the room left (add_mode cash, default; required with MIN2(1, g / acct.gross_req))
+                  acct.room: remaining gross room for this add, in pos.size units = (cap - gross before today's adds) x this add / all adds today / target weight; data up to today's close
                   [MIN2(max, ]FILL(<pos.* piecewise or linear>, 1)[)]                    weight reading pos.* (target form)
                   apx.STAGGER(n, <product>)                                               hold_days
-rebalance_when    apx.EVERY(n) = rebalance_days n | market BOOL
+rebalance_when    apx.EVERY(n) = rebalance_days n | apx.EVERY($reb) | market BOOL
+hold              apx.IN_TOP(p) = long threshold: score percentile >= p/200 (180 top 10%), p 0..200 or $name; = GE(CS_PCT(apx.SCORE()), p / 200)
 hold              && GTOP(k, group key, apx.SCORE())  group_by/group_cap | && !FILL(pos.exit_days <= n, false)  reentry_days n
 formulas          apx.THEN(score, key)  tie_by (same key in every formula)
 not held          pos.held = 0, other pos.* invalid (pos.exit_days invalid if never exited): wrap pos.* factors in FILL
-env args stay     initial_capital contribution contribution_every lot min_fee lock cash_rate margin_rate add_mode grid grid_by
+env args stay     initial_capital contribution contribution_every lot min_fee lock cash_rate margin_rate grid grid_by
 
 e.g. B12c `{"rebalance_when":"apx.EVERY(21)","weight":"apx.SHARE(apx.PICK(10, false), 1) * !(pos.held && FILL(pos.drawdown >= 0.1, false)) * FILL(pos.size * (1 - 0.5 * (pos.ret >= 0.2 && !FILL(LAG(1, pos.ret >= 0.2), false) && !apx.EVERY(21))), 1)"}`
 
@@ -434,7 +458,9 @@ e.g. B12c `{"rebalance_when":"apx.EVERY(21)","weight":"apx.SHARE(apx.PICK(10, fa
 
 Numbers to try inside a formula: write `$name`, values in the one `grid` (`portfolio.grid`): `formulas=["RET_SKIP($n, 21, close)"]`, `grid {"n":[126,252]}` = the two trees written directly (same identity; `nouns` is sugar for it). A name in a formula -> one tree per value; a name in hold / exposure / weight / exit_when / keep_when / exit_below / exit_above / sizing -> variants of each tree. `{"formulas":["RET($n, close)"],"portfolio":{"exit_when":"pos.ret <= -$stop","grid":{"n":[60,120],"stop":[0.08,0.1]}}}` = 2 trees x 2 variants. Same name on both sides -> `E_GRID_SHARED`. Formula names: <= 256 values each, <= 20000 trees, window lengths OK. Plan: `effective.formula_grid`.
 
-Each tree tries a base grid of portfolio settings (rebalance 5 / 21, positions 20 / 50 unless given); `screen_pick` keeps one. Portfolio rules (`exit_when` ...) apply to every strategy of the search, sampled or given.
+Search near the original: `apx.EVOLVE(x)` (also `EVOLVE(x)`, one argument) wraps one number or column; removing it = the starting formula (same identity). Operator parameter -> 2 grid points each side (`RET(apx.EVOLVE(60), close)` = `RET($n, close)` + `grid {"n":[20,40,60,120,252]}`, same trees and result; packed parameters change only the wrapped part); constant -> x 1/2 3/4 7/8 9/8 5/4 3/2 2 (days / counts: day grid); column -> every panel column of the same unit and kind. Candidates must compile, have a numeric root and fit the warm-up. Several positions multiply (first in text outermost); `$name` substituted first. Plan: `effective.formula_grid.evolve` (per position: `kind`, `from`, `values`). Wrapping an expression or anything in `universe` -> `APX_UNSUPPORTED`. In portfolio rules only a threshold number: `pos.ret <= -apx.EVOLVE(0.08)` = `$evolve1` with grid [0.04 .. 0.16]; integers in `apx.PICK` / `apx.EVERY` use the day grid; an operator parameter -> `E_EVOLVE_WINDOW`.
+
+Each tree tries a base grid of portfolio settings, default 16: long threshold apx.IN_TOP 160 / 170 / 180 / 190 x rebalance 5 / 21 x positions 20 / 50; `screen_pick` keeps one. Each axis is a `$name` + `grid`: `apx.IN_TOP($pl)` in hold, `apx.EVERY($reb)`, `apx.PICK($n, ...)`, key `$wk == 0 ? 1 : apx.INV_VOL_KEY()`; only `grid` = `{"grid":{"reb":[5,10,21]}}` (names pl / reb / n / wk). One value = the plain number (same library). Those $names only in those places. apx.RANK_KEY(p): p = the apx.IN_TOP p. apx.IN_TOP / apx.RANK_KEY only in portfolio. Portfolio rules (`exit_when` ...) apply to every strategy of the search, sampled or given.
 
 Random generation: `config {"sample_new": bits}` 1 = also market-level columns, `MKT_MEAN`, `EW_INDEX` as leaves; 2 = `CORR_GROUP` as group key.
 
@@ -448,14 +474,15 @@ Screening expressions: same operators (plus `%`), doubles; `nan` compares false;
 
 series  r (daily net return, costs deducted)  m (equal-weight mean of the pool)  b (market index daily return, total return index mkt.idx_tr; nan without that column)
         year  month  regime (+1 bull / -1 bear / 0)  half (1|2)  day  pos
-scalars cs_bp ts_bp novel_bp short_bp total_bp n_nodes | net_ret_1e6 max_dd_1e6 n_rebalances avg_positions_x100 breadth_min
+scalars cs_bp ts_bp novel_bp short_bp total_bp n_nodes | net_ret_1e6 max_dd_1e6 n_rebalances avg_positions_x100 breadth_min(min selectable over rebalance days; days with no valid rank skipped)
         reb_days p_long p_short max_positions cost_bp weight_mode | n_days day_first day_mid n_symbols
         ic_x1e4 ic_t_x100 ic_pos_x1e4 ic_days spread_1e6 spread_days quint_1e6_1..5 quint_days quint_rho_x1e4 quint_mono_x1e4
         turnover_bp_avg turnover_days breadth_med breadth_days ic_decay_x1e4_{1,5,21,63} ic_decay_days_{1,5,21,63} ic_half_life_days ic_h1_x1e4 ic_h2_x1e4
-        size_rho ind_hhi ind_top n_ind adv_med adv_min
-funcs   ABS SQRT LOG EXP POW MIN2 MAX2 WHERE HAS | SUM MEAN SD VAR COUNT(elements) FIRST LAST MIN MAX(=AMIN AMAX) QUANTILE STREAK LEN
+        size_rho ind_hhi ind_top n_ind adv_med adv_min | alpha_share_bp breadth_eff_x100(risk model) mt_dsr mt_ic_padj(multitest) round_pbo(screen_gate only, end of round)
+funcs   ABS SQRT LOG EXP FLOOR POW MIN2 MAX2 WHERE HAS | SUM MEAN SD VAR COUNT(elements) FIRST LAST MIN MAX(=AMIN AMAX) QUANTILE STREAK LEN
         CUM PEAK DRAWDOWN NAV DRAWDOWN_NAV DIFF FILTER | ROLL_SUM ROLL_MEAN ROLL_STD ROLL_MIN ROLL_MAX(n, x) SKIP(k, x) LAG(k, x)
         BY_SUM BY_MEAN BY_SD BY_MIN BY_MAX BY_COUNT BY_PROD1 BY_KEY | nan     (days a condition holds = SUM(cond))
+        RANK_DESC(x) (per-day rank, largest = 1, ties -> earlier day)  BOOT(seed, block) (block-bootstrap count per day, seeded, order kept)
 
 `apx.*` dictionary (defined with the atoms above):
 
@@ -474,8 +501,9 @@ apx.TURNOVER  apx.TURNOVER_ANN  apx.HOLD_DAYS  apx.COST_DRAG_ANN  apx.AVG_POSITI
 apx.SHARPE_H1  apx.SHARPE_H2  apx.SHARPE_Y_MIN  apx.SHARPE_BULL  apx.SHARPE_BEAR  apx.RET_BULL_ANN  apx.RET_BEAR_ANN  apx.DAYS_BULL  apx.DAYS_BEAR
 apx.EXCESS_B_ANN = apx.ANN_OF(r - b)  apx.IR_B = apx.SHARPE_OF(r - b)  apx.BETA_B = apx.BETA_OF(r, b)  apx.YEARS_BEAT_B = MEAN(BY_PROD1(year, r) > BY_PROD1(year, b))
 apx.ROLL_SHARPE_MIN = MIN(ROLL_MEAN(252, r) / ROLL_STD(252, r)) * SQRT(252)   apx.ROLL_RET_MIN = MIN(EXP(ROLL_SUM(252, LOG(1 + r)))) - 1
+apx.TOTAL = FLOOR((3 * cs_bp + 2 * ts_bp + 3 * novel_bp + 2 * short_bp) / 10)   (= total_bp; default order of settings)
 
-One threshold `screen_gate` (may use `check.<NAME>.<output>`: split at top-level `&&`, parts with `check.*` run after the checks, the rest before; needs that check on) and one ordering `portfolio.grid_by` (orders a formula's combinations, larger first; default combined score). Old `screen_admit` = appended to `screen_gate`; `screen_pick` as before; `check.*` in `screen_pick`/`grid_by` = `E_CHECK_STAGE`.
+One threshold `screen_gate` (may use `check.<NAME>.<output>`: split at top-level `&&`, parts with `check.*` run after the checks, the rest before; needs that check on) and one ordering `portfolio.grid_by` (orders a formula's combinations, larger first; default combined score). Old `screen_admit` = appended to `screen_gate`; `screen_pick` as before; `check.*` in `screen_pick`/`grid_by` = `E_CHECK_STAGE`. Risk/multitest atoms in `screen_pick` are evaluated once computed; `round_pbo` failing in `screen_gate` moves the round's admissions out. Report job (`submit_report`): `screen_gate` picks which admitted strategies get reports, `grid_by` orders them (default `ic_t_x100`, nan last, ties in library order), first `top` (0 = all); no `check.*`; old `min_ic_t=X` = `screen_gate="ic_t_x100 / 100 >= X"`.
 
 月勝率至少六成                 screen_gate="apx.MONTH_WIN >= 0.6"
 每一年都贏同範圍等權平均       screen_gate="MIN(BY_SUM(year, r - m)) > 0"
@@ -504,20 +532,36 @@ runs[]      <= 8; id required; not written = original
   with      comma-separated transforms (commas inside parentheses do not split); old keys universe / ret and old names (universe.peer_a ... ret.shuffle) still accepted
             pool (any number, intersected; re-ranked inside): BOOL expression in the universe= language, e.g. CS_PCT(fund.mktcap) >= 0.7 | PEER_SIDE([ruler]) == 0 / == 1 (paired similar stocks split A/B) | RANDOM_HALF([k]) (k-th random half)
             returns (at most one): RETURNS(RATIO expression of ret), e.g. RETURNS(SUB(ret, MKT_MEAN(ret))), RETURNS(MIN2(MAX2(ret, -0.1), 0.1)) (applied to full-day / overnight / intraday each)
-                     | PEER_SWAP([ruler]) = REMAP(PEER_IDX([ruler])) (closest peer's whole bar) | SHUFFLE([k[, group key]]) = REMAP(SHUFFLE_IDX(...)) (shuffled daily, inside the same group key)
+                     | PEER_SWAP([ruler]) = REMAP(PEER_IDX([ruler])) (closest peer's whole bar); ruler can be written in full: PEER_SWAP(lookback, every, step, rank 0 or 1, min_corr_bp (-10000 = none), input (ret = daily return)[, group key e.g. PARENT_ID(1)]); default = PEER_SWAP(252, 126, 1, 0, 3000, ret)
+                     | SHUFFLE([k[, group key]]) = REMAP(SHUFFLE_IDX(...)) (shuffled daily, inside the same group key)
                      | REMAP(index expr) (cell takes that stock's bar; PEER_IDX / SHUFFLE_IDX give an integer index; partial: REMAP(MASK(cond, PEER_IDX())))
-            $param and RUN.var (this run's vary variable; values must be numbers or $param) are substituted first; <= 2 different pools and <= 2 different return transforms per round
-            errors: E_WITH_TYPE (item is not a condition: wrap returns in RETURNS(...)) E_WITH_TWICE E_WITH_UNKNOWN E_RET_MIX E_RET_UNIT E_UNIVERSE_EMPTY E_RES_LIMIT E_CHECK_LANG E_CHECK_ATOM_PLACE
+            score (any number, applied in order): SCORE(expr of score) (score = the candidate's own score; ranked in this run's pool; SCORE(score) = unchanged)
+                     | ENTRY_DELAY(n) = SCORE(LAG(n, score)) | ENTRY_DELAY_ASOF(n) = SCORE(LAG(n, CS_PCT(score)))
+                     | RETUNE(f) (every day-count arg x f/100, floored, clamped to the op's range; f 1..1000) | RETUNE_AT(i, f) (only the i-th, text order, 0-based); both apply first, before SCORE
+                     | SCORE_NOISE(k, amp_bp) = SCORE(ADD(CS_PCT(score), MUL(amp_bp / 10000, NOISE(k)))) (seed = this check + run id: same bits on re-run)
+                     day-count args = chapter-4 N args (+ RWIN/EWIN/RWIN_PCT periods, algorithmic W); prog.n_windows = their count; too few -> that formula fails, record "error":"E_FORMULA_NO_WINDOW"; record adds clamped
+            rebalance days (at most one): REBALANCE_WHEN(market-wide BOOL) (same rule as rebalance_when) | PHASE(n, k) = REBALANCE_WHEN(EVERY(n, k))
+            days (any number, weights multiply; positions unchanged, metrics recollected per day): DAYS(w) (w = screening-language weight over this run's r m year month regime half day b; 0/nan = drop, n = count n times, max 32)
+                     | DROP_TOP_DAYS(k) = DAYS(rank_desc(r) > k) | DROP_BOTTOM_DAYS(k) = DAYS(rank_desc(-r) > k) | ONLY_DAYS(cond) = DAYS(cond) | BOOTSTRAP(seed, block) = DAYS(boot(seed, block))
+                     a run with days reads only net_ret_1e6 ic_x1e4 ic_t_x100 ic_pos_x1e4 ic_days spread_1e6 spread_days (else E_DAYS_FIELD, max_dd too); all weights 1 = the original run
+            your own reserved function: user.<author>.NAME([args]) / NAME@version(...) as a whole item = its body with args substituted (apx.noun.v1, out_unit TRANSFORM, body = with items, params as $name; ENTRY_DELAY / ENTRY_DELAY_ASOF / PHASE / DROP_TOP_DAYS / DROP_BOTTOM_DAYS / ONLY_DAYS / BOOTSTRAP / DROP_*_HELD / SCORE_NOISE are official definitions of the same kind)
+            pool from an earlier run: DROP_TOP_HELD(run, k) = !CS_TOPK(k, HELD_RET(run)) | DROP_BOTTOM_HELD(run, k) = !CS_TOPK(k, NEG(HELD_RET(run))) | DROP_MOST_HELD(run, k) = !CS_TOPK(k, HELD_DAYS(run))
+                     HELD_RET(run) RATIO = per stock, the sum of every return piece that run's backtest booked on it (full days held, overnight / intraday part on next-open trade days, touch-exit part); HELD_DAYS(run) COUNT = days held; one value per stock, 0 if never held
+                     the referred run (no vary, no windows) runs one stage earlier by itself; per round <= 16 such pools
+            $param and RUN.var (this run's vary variable; values must be numbers or $param; a range end may use prog.n_windows, reserving 16 score layers, shrink with MIN2(prog.n_windows, 4) - 1) are substituted first; per round <= 2 different pools, <= 2 return transforms, <= 16 score transforms, <= 32 rebalance-day transforms
+            errors: E_WITH_TYPE (item is not a condition: wrap returns in RETURNS(...)) E_WITH_TWICE E_WITH_UNKNOWN E_RET_MIX E_RET_UNIT E_UNIVERSE_EMPTY E_RES_LIMIT E_CHECK_LANG E_CHECK_ATOM_PLACE E_DAYS_FIELD E_XFN E_RUN_REF_SELF E_FORMULA_NO_WINDOW
   interval  full | window.is | window.oos (needs windows.rolling) | window.seg (needs windows.split) | {"begin": expr, "end": expr} (day index, may use env.first env.n_days)
-  portfolio cost_bp p_long p_short rebalance_days weight_mode max_positions max_weight_bp max_turnover_bp = expr; prog.FIELD = original value
+  portfolio cost_bp p_long p_short rebalance_days weight_mode max_positions max_weight_bp max_turnover_bp = expr; prog.FIELD = original value; prog.n_windows (read-only) = the formula's day-count args
   vary      {"var": [v...]} or {"var": {"from": a, "to": b}}; one variable, 1..16 values; a portfolio argument name is applied directly
 windows     {"kind":"rolling","is_days":504,"oos_days":126,"max":32} (backwards from the last day) | {"kind":"split","n":4}; <= 32 segments
 outputs     <= 16 i64 expressions: RUN.FIELD (scalar atoms of section 11: net_ret_1e6 max_dd_1e6 ic_x1e4 ic_t_x100 ic_days spread_1e6 ...), RUN.VAR, $param, env.NAME, prog.FIELD, earlier outputs
-            functions ABS MIN2(a,b) MAX2(a,b) SIGN KEEP_BP(variant, original); aggregates COUNT SUM ALL ANY AMIN AMAX FIRST LAST NTH(expr,k) WINNER(RUN,FIELD,VAR) n_windows (windowed / varied runs must be aggregated); old lower-case names = same
+            functions ABS MIN2(a,b) MAX2(a,b) SIGN KEEP_BP(variant, original); aggregates COUNT SUM ALL ANY AMIN AMAX FIRST LAST NTH(expr,k) PCT(expr,q_bp) (vary percentile, 500 = 5th) WINNER(RUN,FIELD,VAR) n_windows (windowed / varied runs must be aggregated); old lower-case names = same
             division by 0 = 0; comparisons return 0/1; screen_gate reads check.<NAME>.<output>
 pass        condition over outputs, $params, env.*
 params      [{"name","default","min","max"}]; call with them in order: checks=["user.local.NAME(v1, v2)"]
 env         n_days first n_symbols peer_nn_corr_bp peer_fallback_bp peer_paired_bp mt_dsr_bp mt_ic_padj_bp mt_n_eff_x100 ic_t_x100 net_ret_1e6
+            n_checks_tried n_checks_pass (different checks this candidate went through / passed in this library before this search; -1 = no library)
+record      user checks (or transforms with arguments) add id (identity: name@version, content_hash, params, ruler if used, seed, uses), uses (user transforms name@version), seed; built-in records unchanged
 use         stock_formula_help topic=validate document={...} -> my_stock_strategies_change action=install document={...} -> checks=["user.local.NAME"]
 
 最近一年 IC 也要為正            runs [{"id":"late","interval":{"begin":"env.n_days - 252","end":"env.n_days"}}]  outputs {"late_ic":"late.ic_days > 0 ? late.ic_x1e4 : 0"}  pass late_ic > 0
@@ -527,7 +571,17 @@ use         stock_formula_help topic=validate document={...} -> my_stock_strateg
 扣掉全市場平均後還要賺          runs [{"id":"ex","with":"RETURNS(SUB(ret, MKT_MEAN(ret)))"}]  outputs {"r":"ex.net_ret_1e6"}  pass r > 0
 同市值帶內打亂、IC t 要高出 2   runs [{"id":"base"},{"id":"sh","with":"SHUFFLE(0, CS_QCUT(10, fund.mktcap))"}]  outputs {"gap":"base.ic_t_x100 - sh.ic_t_x100"}  pass gap >= 200
 兩份隨機一半 IC 都同號          runs [{"id":"base"},{"id":"h","vary":{"s":[1,2]},"with":"RANDOM_HALF(h.s)"}]  outputs {"n":"COUNT(SIGN(h.ic_x1e4) == SIGN(base.ic_x1e4))"}  pass n == 2
+拿掉最好的 5 天還賺嗎          runs [{"id":"nobest","with":"DROP_TOP_DAYS(5)"}]  outputs {"r":"nobest.net_ret_1e6"}  pass r > 0
+只看空頭日 IC 還要為正         runs [{"id":"bear","with":"ONLY_DAYS(regime < 0)"}]  outputs {"ic":"bear.ic_days > 0 ? bear.ic_x1e4 : 0"}  pass ic > 0
+日子重抽樣 16 次九成五都賺     runs [{"id":"bs","vary":{"s":{"from":1,"to":16}},"with":"BOOTSTRAP(bs.s, 21)"}]  outputs {"p05":"PCT(bs.net_ret_1e6, 500)"}  pass p05 > 0
 前後兩半 IC 同號                windows {"kind":"split","n":2}  runs [{"id":"seg","interval":"window.seg"}]  outputs {"seg_ic":"seg.ic_days > 0 ? seg.ic_x1e4 : 0","lo":"AMIN(seg_ic)","hi":"AMAX(seg_ic)"}  pass lo > 0 || hi < 0
+進場晚 1～3 天，晚 3 天還要賺   runs [{"id":"late","vary":{"n":[1,2,3]},"with":"ENTRY_DELAY(late.n)"}]  outputs {"r":"LAST(late.net_ret_1e6)"}  pass r > 0
+換股日錯開也要穩（錯開 0～15）  runs [{"id":"ph","vary":{"k":{"from":0,"to":15}},"with":"PHASE(21, ph.k)"}]  outputs {"n":"COUNT(ph.net_ret_1e6 > 0)"}  pass n * 10 >= 16 * 8
+拿掉賺最多的 5 檔還要賺         runs [{"id":"base"},{"id":"cut","with":"DROP_TOP_HELD(base, 5)"}]  outputs {"r":"cut.net_ret_1e6"}  pass r > 0
+每月第一個交易日換股還要賺      runs [{"id":"mo","with":"REBALANCE_WHEN(MONTH_START())"}]  outputs {"r":"mo.net_ret_1e6"}  pass r > 0
+只在大型股晚 n 天（自己的變換）  transform {"schema":"apx.noun.v1","name":"user.local.BIG_LATE","version":1,"out_unit":"TRANSFORM","params":[{"name":"n","default":1}],"body":"CS_PCT(fund.mktcap) >= 0.7, ENTRY_DELAY($n)"}  runs [{"id":"bl","with":"user.local.BIG_LATE(2)"}]  outputs {"r":"bl.net_ret_1e6"}  pass r > 0
+之前試過的檢驗不超過 3 種       runs [{"id":"x"}]  outputs {"tried":"env.n_checks_tried","r":"x.net_ret_1e6"}  pass tried <= 3 && r > 0
+分數平滑 5 天 IC 要同號         runs [{"id":"base"},{"id":"sm","with":"SCORE(ROLL_MEAN(5, score))"}]  outputs {"s":"SIGN(sm.ic_x1e4) == SIGN(base.ic_x1e4)"}  pass s == 1
 樣本內挑門檻、樣本外兩段都要賺  windows {"kind":"rolling","is_days":504,"oos_days":252,"max":2}  runs [{"id":"is","interval":"window.is","vary":{"p_long":[170,180,190]}},{"id":"oos","interval":"window.oos","p_long":"WINNER(is, net_ret_1e6, p_long)"}]  outputs {"oos_ret":"oos.net_ret_1e6","ok":"ALL(oos_ret > 0)"}  pass n_windows >= 2 && ok == 1
 
 12. User functions
@@ -549,8 +603,8 @@ nodes per formula   128 after expansion to atoms (reserved functions (marked r) 
 windows             1260: LAG DIFF WSUM ROLL_MEAN ROLL_MAX ROLL_MIN ROLL_STD ROLL_RANK WRANK COUNT FIRST_IN_WINDOW WDROP | 250: CS_RANK_CHG CS_RANK_MEAN EV_POST_N EV_DAYS_SINCE
                     84: EMA | 756: SMOOTH K | 256: algorithmic W | 12: RWIN k | 20: EWIN k | 252: everything else
 warm-up             < panel days / 3 (TW panel 4127 days -> 1375); config {"lookback_div": 2} relaxes it
-exit rules          6 comparisons per rule, coefficients within +-100; exit_below / exit_above 1-3 terms each
-other               CORR points 20..1024; seeds 1..64; 20 listed symbols in a pool; noun grid 20000; $name in formulas 20000 trees; threshold grid 64 sets; 8 checks
+exit rules          coefficients within +-100
+other               CORR points 20..1024; seeds 1..64; 20 listed symbols in a pool; noun grid 20000; $name in formulas 20000 trees; base grid x threshold sets 32,767; 8 checks
 
 14. Errors -> fix
 
@@ -562,7 +616,7 @@ APX_UNIT_MISMATCH       units disagree -> convert to a common or unitless value;
 APX_PARAM_RANGE         parameter outside the operator's range (message carries the range); RET DIST_HIGH DIST_LOW VOL_RATIO FN_YOY N 253..1260 -> long form, e.g. RET(300, close) -> SUB(RATIO(close, LAG(300, close)), 1)
 APX_PARAM_TYPE          parameters are integers
 APX_ARITY               parameters first, inputs after; e.g. ROLL_MEAN(20, close)
-APX_UNSUPPORTED         SELECT / REC2 / STATESCAN in formula text -> c ? a : b
+APX_UNSUPPORTED         SELECT(...) -> c ? a : b; REC2 (four inputs) -> SMOOTH or two-input forms
 APX_ENGINE_LIMIT        more than 128 nodes after expansion (response carries the count)
 APX_CYCLE               user functions reference each other
 APX_FIELD / APX_CONFLICT  definition fields; same name@version with different content -> bump version
@@ -571,12 +625,15 @@ APX_INVALID_ARGUMENT    unknown portfolio key; exclusive arguments given togethe
 E_NOT_BOOL              a condition must be a comparison / in / && || !
 E_NOT_MARKET_WIDE       rebalance_when / exposure not the same for every stock -> calendar, idx.*, MKT_MEAN, EW_INDEX; per-stock conditions go to hold
 E_NO_REBALANCE / E_NO_WEIGHT   never true / never positive over the period
-E_POS_RULE / E_POS_ATOMS       pos.* shape rules (section 9) / more than 6 comparisons
+E_POS_RULE                     pos.* shape rules (section 9)
 E_POS_GROUP             only one of group_by / group_cap, or pos.* in group_by -> give both
 E_POS_SIZE              sizing / account argument out of range or missing partner (size_init needs add_when; gross_max > 1 needs margin_rate)
 E_EMPTY_UNIVERSE        fewer than 1 stock per day on average -> relax
 E_UNKNOWN_CODE / E_AMBIGUOUS_NAME   code names: industry numbers, TW / TWO, "2330"; write the full column key
 E_CHECK_STAGE           check.* in screen_pick / grid_by, or in screen_gate with that check off
+E_EVOLVE_ARGS           apx.EVOLVE needs exactly one argument; fix = whole corrected formula
+E_EVOLVE_EMPTY          the wrapped number / column has no neighbour (BOOL, 0, no same-kind column); fix = wrap one level out
+E_EVOLVE_WINDOW         operator parameter wrapped in a portfolio rule; fix = $name + grid form
 APX_CHECK_E_SCORE_COND_TIMES   score root = condition x number -> MASK(condition, number) (fix carried)
 APX_CHECK_E_SCORE_ALL_INVALID  no stock scored on any day of the last year -> answer names the dead node and the fix
 APX_CHECK_E_SCORE_RANK_TIES    rank-in-group score ties beyond the pick count on every sampled day -> portfolio.tie_by = the ranked value

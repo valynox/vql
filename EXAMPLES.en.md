@@ -43,6 +43,24 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 {"schema": "apx.noun.v1", "name": "user.local.NEAR_HIGH", "version": 1, "inputs": [{"name": "x", "unit": "PRICE"}], "params": [{"name": "n", "default": 250, "min": 2, "max": 1260}], "body": "RATIO(x, ROLL_MAX($n, x))", "out_unit": "RATIO"}
 ```
 
+**S05　Let the system search the momentum lookback around 60 days**
+
+```json
+{"formulas": ["RET(apx.EVOLVE(60), close)"]}
+```
+
+**S06　Let the system search the stop-loss level around 8%**
+
+```json
+{"formulas": ["RET_SKIP(252, 21, close)"], "portfolio": {"max_positions": 10, "rebalance_days": 21, "exit_when": "pos.ret <= -apx.EVOLVE(0.08)"}}
+```
+
+**S07　The same momentum on the other price columns of the same kind**
+
+```json
+{"formulas": ["CS_PCT(RET(60, apx.EVOLVE(close)))"]}
+```
+
 ## Stock pool
 
 **U01　Only stocks listed for at least two years**
@@ -377,6 +395,54 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 {"formulas": ["RET_SKIP($n, 21, close)"], "portfolio": {"grid": {"n": [126, 252]}}}
 ```
 
+**R33　A self-built MACD histogram (12, 26, 9); larger as a share of price ranks higher**
+
+```json
+{"formulas": ["RATIO(user.local.MACD_HIST(78, close), close)"]}
+```
+
+Validate (`stock_formula_help topic=validate`), then install the user definition (`my_stock_strategies_change action=install`):
+
+```json
+{"schema": "apx.noun.v1", "requires": "apx-std>=1.0", "name": "user.local.MACD_HIST", "version": 1, "description": "MACD 柱 = DIF − DIF 的 EMA9；DIF = EMA12 − EMA26（α = 2/13、2/27、0.2）；單位：價格", "inputs": [{"name": "x", "unit": "PRICE"}], "params": [{"name": "k", "default": 78, "min": 0, "max": 756}], "body": "SUB(SUB(SMOOTH(0, 0.153846:RATIO, x), SMOOTH(0, 0.074074:RATIO, x)), SMOOTH($k, 0.2:RATIO, SUB(SMOOTH(0, 0.153846:RATIO, x), SMOOTH(0, 0.074074:RATIO, x))))", "out_unit": "PRICE"}
+```
+
+**R34　A self-built 20-day Bollinger z (standard deviations from the middle band); lower ranks higher**
+
+```json
+{"formulas": ["NEG(user.local.BOLL_Z(20, close))"]}
+```
+
+Validate (`stock_formula_help topic=validate`), then install the user definition (`my_stock_strategies_change action=install`):
+
+```json
+{"schema": "apx.noun.v1", "requires": "apx-std>=1.0", "name": "user.local.BOLL_Z", "version": 1, "description": "布林 Z = (x − n 日均) / n 日標準差（母體）；±2 = 布林上下緣；單位：倍數", "inputs": [{"name": "x", "unit": "PRICE"}], "params": [{"name": "n", "default": 20, "min": 2, "max": 1260}], "body": "RATIO(SUB(x, ROLL_MEAN($n, x)), ROLL_STD($n, x))", "out_unit": "RATIO"}
+```
+
+**R35　A self-built 9-day KD %K; lower ranks higher**
+
+```json
+{"formulas": ["NEG(user.local.KD_K(9, 27, high, low, close))"]}
+```
+
+Validate (`stock_formula_help topic=validate`), then install the user definition (`my_stock_strategies_change action=install`):
+
+```json
+{"schema": "apx.noun.v1", "requires": "apx-std>=1.0", "name": "user.local.KD_K", "version": 1, "description": "KD 的 K：RSV = (c − n 日最低) / (n 日最高 − n 日最低)，K = RSV 的 1/3 平滑；0～1（×100 = 常見刻度）；D = SMOOTH(k, 0.333333:RATIO, K)", "inputs": [{"name": "h", "unit": "PRICE"}, {"name": "l", "unit": "PRICE"}, {"name": "c", "unit": "PRICE"}], "params": [{"name": "n", "default": 9, "min": 2, "max": 252}, {"name": "k", "default": 27, "min": 0, "max": 756}], "body": "SMOOTH($k, 0.333333:RATIO, RATIO(SUB(c, ROLL_MIN($n, l)), SUB(ROLL_MAX($n, h), ROLL_MIN($n, l))))", "out_unit": "RATIO"}
+```
+
+**R36　A self-built 14-day ATR as a share of price; lower (calmer) ranks higher**
+
+```json
+{"formulas": ["NEG(RATIO(user.local.ATR(42, high, low, close), close))"]}
+```
+
+Validate (`stock_formula_help topic=validate`), then install the user definition (`my_stock_strategies_change action=install`):
+
+```json
+{"schema": "apx.noun.v1", "requires": "apx-std>=1.0", "name": "user.local.ATR", "version": 1, "description": "Wilder ATR（α = 1/14）；真實區間 = max(h − l, |h − 昨收|, |l − 昨收|)；單位：價格", "inputs": [{"name": "h", "unit": "PRICE"}, {"name": "l", "unit": "PRICE"}, {"name": "c", "unit": "PRICE"}], "params": [{"name": "k", "default": 42, "min": 0, "max": 756}], "body": "SMOOTH($k, 0.071429:RATIO, MAX2(SUB(h, l), MAX2(ABS(SUB(h, LAG(1, c))), ABS(SUB(l, LAG(1, c))))))", "out_unit": "PRICE"}
+```
+
 ## Heat and flows
 
 **H01　Score only stocks trading 3x their 20-day average volume today, ranked by return**
@@ -667,6 +733,24 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 
 ```json
 {"formulas": ["MASK(YEAR() >= 2020, RET(60, close))"], "portfolio": {"max_positions": 10, "rebalance_when": "WEEK_START()"}}
+```
+
+**B37　Use up to 1.5x capital (margin), add one unit after a 4% gain; adds beyond the cap use only the room left**
+
+```json
+{"formulas": ["RET(60, close)"], "portfolio": {"max_positions": 10, "rebalance_days": 21, "add_when": "pos.ret >= 0.04", "gross_max": 1.5, "margin_rate": 0.05}}
+```
+
+**B38　Use up to 1.5x capital (margin), add one unit after a 4% gain; beyond the cap shrink all holdings in proportion**
+
+```json
+{"formulas": ["RET(60, close)"], "portfolio": {"max_positions": 10, "rebalance_days": 21, "add_when": "pos.ret >= 0.04", "gross_max": 1.5, "margin_rate": 0.05, "add_mode": "scale"}}
+```
+
+**B39　Each rebalance buys new names up to 30% of the number of names held**
+
+```json
+{"formulas": ["RET(60, close)"], "portfolio": {"max_positions": 10, "rebalance_days": 21}, "config": {"max_turnover_bp": 3000}}
 ```
 
 ## Screening and built-in checks
@@ -963,4 +1047,10 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 
 ```json
 {"formulas": ["MASK(GTOP(3, 1, fund.mktcap), RET(20, close))"]}
+```
+
+**W18　Among stocks priced above their industry median, the largest 20-day return above the industry median**
+
+```json
+{"formulas": ["MASK(close > GQUANT(50, 1, close), RET(20, close) - GQUANT(50, 1, RET(20, close)))"]}
 ```

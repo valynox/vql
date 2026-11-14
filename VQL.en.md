@@ -41,6 +41,7 @@ All four share one grammar, one set of operators and one precedence table. They 
 | User function | `user.<author>.NAME` | the user, stored through `my_stock_strategies_change action=install` | `user.local.RSI` |
 
 - The atom definitions of the reserved functions are in chapter 5: every reserved function decomposes back into atoms, and the definition is bit-identical to writing the name.
+- Data is not a computation: it is information obtained from outside (one set per market), that is, the columns of chapter 7 (the column key `LEAF` is the column itself), the level-L parent id `PARENT_ID(L)` (section 4.8), plus the 5 financial ratios of section 7.4, derived by dividing data columns (derived data, e.g. `FN_EP`).
 - A user function expanded to atoms is the same tree as writing the atoms directly, with the same results.
 - There are also official class nouns `cls.NAME()` (chapter 8), used only in conditions.
 
@@ -65,7 +66,7 @@ node = column[:UNIT]  |  number[:UNIT]  |  NAME(params..., inputs...)  |  $param
 | White space | spaces and line breaks are free | |
 
 - Parameters are always integers. Number of parameters = number of arguments - number of inputs.
-- An operator has at most two inputs. Atoms with three or four inputs (`SELECT`, `REC2`, `STATESCAN`) are not accepted in formula text today (section 4.13).
+- An operator has at most three inputs: write the three-input `STATESCAN` (section 4.13) and `GRESID` (section 4.8) directly; write `SELECT` as `c ? a : b`; the four-input `REC2` is not accepted in formula text.
 - Parentheses nest at most 64 levels.
 
 ### 2.2 Operator form and function form are the same tree
@@ -116,10 +117,13 @@ Two things to note:
 |---|---|
 | `0.5:RATIO`, `20:DAYS`, `1:COUNT`, `0:PRICE` | constants with an explicit unit |
 | `close > 100` | a number without a unit takes the unit of the other side (here `100:PRICE`) |
+| `WREG(20, 0, close, 100)`, `CLIP(close, 10, 100)` | inputs of one group (add and subtract, comparisons, `MAX2` / `MIN2`, `FILL`, the two branches of `?:`, y and x of `WREG`, the X inputs of one reserved function) are the same kind of quantity: a constant without a unit takes the unit of the one that has it (PRICE here). Atoms and reserved functions follow the same rule |
+| `FILL(MASK(r, close), MASK(NOT(r), 0))`, `close + LAG(1, 5)` | the same holds for a constant inside an atom whose output has its input's unit (the value of `MASK`, `LAG`, `NEG`, `ROLL_*`, the value of `SCANSUM` ...): `0` and `5` are PRICE here |
 | `close / LAG(20, close) > 1.1` | the left side is RATIO, so `1.1` is `1.1:RATIO` |
 | `MUL(x, 2)`, `RATIO(x, 3)` | a bare multiplier or divisor with no other side to follow is RATIO (a unitless factor) |
 | `fund.mktcap > 5e9` | large constants are handled automatically: constants that do not fit 32 bits take 7 significant digits x 10 to the power 0..12 |
 
+- The limits: a constant inside an atom follows numeric units only, not BOOL (`FILL(c, MASK(d, 0))` needs `0:BOOL`; a bare `FILL(c, 0)` still takes BOOL); a weight (w of `GWMEAN`, `GWMEAN_BY`) and the x and z of `GRESID` and `CS_NEUTRAL_SIZE` are each a group of their own, so without a unit they are RATIO.
 - A constant with more fractional digits than the unit's fixed-point precision (6 digits for x1e6 units; none for integer units) is rejected.
 - A formula cannot be only a constant; it needs at least one column.
 
@@ -308,7 +312,7 @@ An invalid value takes part in nothing: **any invalid input -> invalid output.**
 | a step leaves i64 | `GSUM(0, equity)`: the whole-market sum does not fit i64; the means are not in this row (below) |
 | a non-member of a cross-section | `CS_PCT(x)` of a stock outside the stock pool |
 
-The means (`ROLL_MEAN`, `ROLL_STD`, `XL_PARENT`, `GMEAN_BY`, `GSTD`, `GSTD_BY`, `CS_REL_PARENT`, `CS_Z`, `CS_PEER_Z`, `CS_WINZ`) add up in exact 128-bit arithmetic and then divide; a mean always fits i64, so a sum that leaves i64 does not make them invalid. `WSUM` and `GSUM` output the sum itself and stay invalid when it does not fit i64.
+The means (`ROLL_MEAN`, `ROLL_STD`, `XL_PARENT`, `GMEAN_BY`, `GSTD`, `GSTD_BY`, `CS_REL_PARENT`, `CS_Z`, `CS_PEER_Z`, `CS_WINZ`) add up in exact 128-bit arithmetic and then divide; a mean always fits i64, so a sum that leaves i64 does not make them invalid. `WSUM` and `GSUM` output the sum itself and stay invalid when it does not fit i64. The weighted means `GWMEAN_BY`, `GWMEAN` (and `CS_NEUTRAL_IND`) shift the weights and x right until both sums fit i64, then divide: a member always has a value.
 
 Four atoms handle invalid values explicitly:
 
@@ -343,7 +347,7 @@ What happens to an invalid cell:
 | Column | Content |
 |---|---|
 | Signature | parameters (integers) first, inputs after. `N` = window or days, `L` = level, `x a b` = inputs |
-| Layer | A = atom (smallest, implemented directly by the engine); R = reserved function (composed of atoms; the atom definition of every one is in chapter 5) |
+| Layer | A = atom (smallest, implemented directly by the engine); R = reserved function (composed of atoms; the atom definition of every one is in chapter 5); D = data (the thing obtained from outside itself, not a computation) |
 | Params | the legal range of each parameter (code constants) |
 | Units | inputs -> output. X = any numeric unit; "same" = the output has the unit of the input |
 | Invalid and warm-up | rules beyond "any invalid input -> invalid"; warm-up = the first days this node makes invalid |
@@ -354,7 +358,7 @@ Common rules:
 - Any invalid input -> invalid output. Window operators: any invalid cell inside the window -> invalid (rows with another rule say so).
 - A window of N includes today: `[t-N+1, t]`. `LAG(N, x)` is N trading days ago.
 - Warm-up adds up: the warm-up of an outer node = the warm-up of its children + its own.
-- Return-type operators (`RVOL`, `SKEW`, `KURT`, `ACORR`, `BETA`, `RESID_MOM`) use log returns `ln(x[t]/x[t-1])` internally; a price <= 0 -> invalid.
+- Return-type operators (`RVOL`, `SKEW`, `KURT`, `ACORR`, `BETA`, `RESID_MOM`) use log returns `ln(x[t]/x[t-1])` internally; a price <= 0 -> invalid. For the skewness, kurtosis or autocorrelation of any series itself (volume, a score) use `WSKEW`, `WKURT`, `WACORR` (no returns taken, values need not be > 0).
 - Level L: 0 = everything (inside the stock pool), 1 = industry, 2 = market, 3 = country, 4 = global.
 - Members of a cross-section or a group = stocks inside the stock pool that day whose input is valid; non-members get an invalid output.
 - Nodes whose output takes only a few values (bucket numbers, flags, group sums and means, which are the same for every member of a group) produce massive ties when used as a whole score; they are parts: use them as a condition, a group key, or divide / subtract a per-stock value by them.
@@ -363,7 +367,7 @@ Common rules:
 
 | Signature | Layer | Params | Units | Invalid and warm-up | Meaning | Example |
 |---|---|---|---|---|---|---|
-| column key (`LEAF`) | A | — | the column's unit | no value in that cell -> invalid | the column's value that day | `NEG(close)` |
+| column key (`LEAF`) | D | — | the column's unit | no value in that cell -> invalid | the column's value that day | `NEG(close)` |
 | number (`CONST`) | A | fits 32 bits after scaling | declared unit | always valid | a constant | `MASK(close > 10, RET(20, close))` |
 | large number (`CONSTE`) | A | 7 significant digits x 10^0..12 | declared unit | always valid | a constant that does not fit 32 bits; just write the number, it is chosen automatically | `MASK(fund.mktcap > 5e9, RET(20, close))` |
 
@@ -433,12 +437,17 @@ The three rounding reserved functions `MOD`, `ROUND`, `CEIL` are in 5.2.
 | `RVOL(N, x)` | R | N 2..252 | X -> RATIO | warm-up N | population standard deviation of N log returns | `NEG(RVOL(60, close))` |
 | `PARK(N, a, b)` | A | N 2..252 | (X, X) same unit -> RATIO | warm-up N-1 | Parkinson volatility: a = high, b = low | `NEG(PARK(20, high, low))` |
 | `GK(N, a, b)` | A | N 2..252 | (RATIO, RATIO) -> RATIO | warm-up N-1 | Garman-Klass volatility: a = high / low, b = close / open | `NEG(GK(20, RATIO(high, low), RATIO(close, open)))` |
-| `SKEW(N, x)` | A | N 3..252 | X -> RATIO | warm-up N | skewness of N log returns | `SKEW(60, close)` |
-| `KURT(N, x)` | A | N 4..252 | X -> RATIO | warm-up N | excess kurtosis of N log returns | `NEG(KURT(60, close))` |
-| `ACORR(N, k, x)` | A | N 3..252; 1 <= k <= N-2 | X -> RATIO | warm-up N | lag-k autocorrelation of N log returns | `ACORR(60, 1, close)` |
+| `SKEW(N, x)` | R | N 3..252 | X -> RATIO | warm-up N | skewness of N log returns (= `WSKEW(N, LOGR(x, LAG(1, x)))`) | `SKEW(60, close)` |
+| `KURT(N, x)` | R | N 4..252 | X -> RATIO | warm-up N | excess kurtosis of N log returns (= `WKURT(N, LOGR(x, LAG(1, x)))`) | `NEG(KURT(60, close))` |
+| `ACORR(N, k, x)` | R | N 3..252; 1 <= k <= N-2 | X -> RATIO | warm-up N | lag-k autocorrelation of N log returns (= `WACORR(N, k, LOGR(x, LAG(1, x)))`) | `ACORR(60, 1, close)` |
+| `WSKEW(N, x)` | A | N 3..252 | X -> RATIO | any invalid cell in the window, or x constant -> invalid; warm-up N-1 | skewness of the last N values of x itself (population moments; any series, need not be > 0) | `WSKEW(60, volume)` |
+| `WKURT(N, x)` | A | N 4..252 | X -> RATIO | as `WSKEW` | excess kurtosis of the last N values of x itself | `NEG(WKURT(60, RET(1, close)))` |
+| `WACORR(N, k, x)` | A | N 3..252; 1 <= k <= N-2 | X -> RATIO | as `WSKEW` | lag-k autocorrelation (sample ACF) of the last N values of x itself | `WACORR(60, 1, volume)` |
 | `SLOPE(N, x)` | A | N 2..252 | X -> same | warm-up N-1 | slope of the linear regression on time over the last N days (per day) | `RATIO(SLOPE(60, close), close)` |
 | `R2(N, x)` | A | N 3..252 | X -> RATIO 0..1 | warm-up N-1 | R squared of the same regression | `R2(60, close)` |
-| `MAXDD(N, x)` | A | N 2..252 | X -> RATIO | warm-up N-1 | maximum drawdown inside the last N days (positive; old definition, frozen) | `NEG(MAXDD(250, close))` |
+| `WREG(N, mode, y, x)` | A | N 3..1,260; mode 0 slope, 1 intercept, 2 today's residual, 3 R squared, 4 t-stat of the slope | (X, X) same unit -> modes 0, 3, 4 RATIO, 1, 2 the unit of y | warm-up N-1; any invalid cell in the window, or x constant -> invalid | regression of y on x over the last N days (least squares; exact sums, rounded once); write it by name, `REG_SLOPE` ... `REG_T` (section 5.2) | `REG_SLOPE(120, RET(1, close), RET(1, idx.taiex))` |
+| `INV_VOL_KEY(N, x)` | A | N 2..1,260 | RATIO -> COUNT (16,384..1,073,741,824) | warm-up N-1; fewer than half of the window's cells valid -> invalid | the inverse of x's volatility over the last N days, as a weight key (steadier is larger): the sum of squares Q of the k valid cells, vol = floor(sqrt(floor(Q / k)) / 10) (in 1e-5, clamped to 1..65,535), value = floor(2^30 / vol). The volatility of `weighting="inv_vol"` (`apx.INV_VOL_KEY()`) is `INV_VOL_KEY(20, RET(1, close))` | `apx.SHARE(apx.PICK(10, false), INV_VOL_KEY(60, RET(1, close)))` |
+| `MAXDD(N, x)` | A | N 2..252 | X -> RATIO | warm-up N-1 | maximum drawdown inside the last N days (positive; old definition) | `NEG(MAXDD(250, close))` |
 | `DIST_HIGH(N, x)` | R | N 2..1,260 | X -> RATIO (<= 0) | warm-up N-1 | x[t] / highest of the last N days - 1 | `DIST_HIGH(250, close)` |
 | `DIST_LOW(N, x)` | R | N 2..1,260 | X -> RATIO (>= 0) | warm-up N-1 | x[t] / lowest of the last N days - 1 | `DIST_LOW(250, close)` |
 | `UP_STREAK(N, x)` | R | N 1..252 | X -> COUNT | warm-up N | consecutive rising days up to today, capped at N | `UP_STREAK(20, close)` |
@@ -467,21 +476,30 @@ The three rounding reserved functions `MOD`, `ROUND`, `CEIL` are in 5.2.
 - Trailing four quarters = `RWIN(4, 1, x)`; the same month last year = `RWIN(12, 0, revenue_m)`; the previous quarter = `RWIN(1, 0, x)`; the change from the previous period = `RWIN(1, 7, x)`.
 - When a "period" is a day some condition holds rather than a value change, use `EWIN`: the mean close on the last 3 volume-spike days `EWIN(3, 2, volume > 2 * ROLL_MEAN(20, volume), close)`; `LATCH(c, close)` is the close on the latest such day and `EWIN(1, 0, c, close)` the one before it.
 - Example: the mean reaction on the last 4 quarterly-report days = `EWIN(4, 2, EV_CHANGE(revenue), RET(1, close))`. `EV_CHANGE(revenue)` marks the report day (the day quarterly revenue changes); each report day's 1-day return is one period, averaged over the latest 4; a stock with fewer than 4 reports is invalid. `EWIN(4, 3, ...)` is the worst of the 4, `EWIN(1, 0, ...)` the reaction to the previous report.
+- Regression of one series on another: the five names below, each written `(N, y, x)`: y on x, y and x share one unit (return on return, price on price; the slope over time is `SLOPE`). They are reserved functions (section 5.2) that expand to the same atom `WREG(N, mode, y, x)`; the name picks the output (mode):
+
+  | name | mode | output | unit | meaning |
+  |---|---|---|---|---|
+  | `REG_SLOPE` | 0 | slope | RATIO | how much y moves on average when x moves 1 (on market returns: the sensitivity) |
+  | `REG_INTERCEPT` | 1 | intercept | unit of y | the mean of y when x is 0 |
+  | `REG_RESID` | 2 | today's residual | unit of y | today's y minus the line at today's x (on market returns: what is left after the market) |
+  | `REG_R2` | 3 | R squared | RATIO 0..1 | how much of y's variation the line explains |
+  | `REG_T` | 4 | t-stat of the slope | RATIO | the slope over its standard error; a large absolute value = a significant slope |
 
 ### 4.7 Cross-section (same day, inside the stock pool)
 
 | Signature | Layer | Params | Units | Invalid and warm-up | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `CS_PCT(x)` | R | — | X -> RATIO 0..1 | fewer than 2 members -> invalid | percentile inside the stock pool that day | `CS_PCT(RET(60, close))` |
-| `CS_Z(x)` | A | — | X -> RATIO | standard deviation 0 -> invalid | (x - pool mean) / pool standard deviation | `CS_Z(RET(60, close))` |
+| `CS_Z(x)` | A | — | X -> RATIO | standard deviation 0 -> invalid | (x - pool mean) / pool standard deviation (= `GZ(0, x)`) | `CS_Z(RET(60, close))` |
 | `CS_WINZ(k, x)` | R | k 5..100 | X -> RATIO | | `CS_Z` clipped at +-k/10 standard deviations | `CS_WINZ(30, RET(60, close))` |
 | `CS_QCUT(N, x)` | R | N 2..100 | X -> COUNT 0..N-1 | | cuts `CS_PCT` into N buckets and returns the bucket number | `GRANK(CS_QCUT(5, fund.mktcap), RET(20, close))` |
 | `CS_RANK_CHG(N, x)` | R | N 1..250 | X -> RATIO | warm-up N | today's `CS_PCT` - the `CS_PCT` of N days ago | `CS_RANK_CHG(20, RET(60, close))` |
 | `CS_RANK_MEAN(N, x)` | R | N 2..250 | X -> RATIO | today must be valid and at least ceil(N/2) of the last N days valid; warm-up N-1 | mean of `CS_PCT` over the last N days | `CS_RANK_MEAN(20, RET(5, close))` |
 | `CS_RANKMIX(L, flags, a, b)` | R | L 0..4; flags 0..3 (1 inverts a, 2 inverts b, 3 inverts both) | (X, Y) any numeric -> RATIO 0..2 | both must be members; fewer than 2 members -> invalid | the percentiles of a and of b inside group L, added (two equal-weight factors) | `CS_RANKMIX(0, 2, FN_EP(eps, close), RVOL(60, close))` |
 | `CS_REL_RET(N, L, x)` | R | N 1..252; L 0..4 | X -> RATIO | warm-up N | N-day return - the mean return of the group | `CS_REL_RET(20, 1, close)` |
-| `CS_NEUTRAL_IND(L, x, w)` | A | L 1..4 | (X, any numeric) -> unit of x | a member needs w > 0 | x - the w-weighted mean of the group's members | `CS_NEUTRAL_IND(1, RET(20, close), fund.mktcap)` |
-| `CS_NEUTRAL_SIZE(x, z)` | A | — | (X, any numeric) -> unit of x | | residual of x regressed on [1, z] inside the pool | `CS_NEUTRAL_SIZE(RET(20, close), LOG(fund.mktcap))` |
+| `CS_NEUTRAL_IND(L, x, w)` | R | L 1..4 | (X, any numeric) -> unit of x | a member needs w > 0; x - mean outside i64 -> invalid | x - the w-weighted mean of the group's members = `SUB(x, GWMEAN(L, w, x))`, bit for bit (section 5.1) | `CS_NEUTRAL_IND(1, RET(20, close), fund.mktcap)` |
+| `CS_NEUTRAL_SIZE(x, z)` | R | — | (X, any numeric) -> unit of x | | residual of x regressed on [1, z] inside the pool (= `GRESID(0, x, z)`, the whole market as one group) | `CS_NEUTRAL_SIZE(RET(20, close), LOG(fund.mktcap))` |
 | `CS_NEUTRAL_COUNTRY(x, w)` | R | — | (X, any numeric) -> unit of x | | as `CS_NEUTRAL_IND` with the group fixed to the country (for multi-market panels) | `CS_NEUTRAL_COUNTRY(RET(20, close), fund.mktcap)` |
 | `CS_NEUTRAL_MODEL(p, x, q)` | A | p = level 1..4 + K x 256, K <= 16 | (X, any numeric) -> unit of x | | group-demeaned, then minus the projection on K exposure columns; q must be a column written back by the risk model | — |
 
@@ -511,29 +529,38 @@ A group can be given in three ways, all with the same membership rule:
 | `GMAX_BY(k, x)` | A | — | (key, X) -> unit of x | | largest x among the members with the same key | `RATIO(RET(20, close), GMAX(CS_QCUT(5, fund.mktcap), RET(20, close)))` |
 | `GMIN_BY(k, x)` | A | — | (key, X) -> unit of x | | smallest x among the members with the same key | `SUB(RET(20, close), GMIN(CS_QCUT(5, fund.mktcap), RET(20, close)))` |
 | `GSTD_BY(k, x)` | A | — | (key, X) -> unit of x | fewer than 2 members -> invalid | population standard deviation among the members with the same key (as `GSTD`) | `GSTD(CS_QCUT(5, fund.mktcap), RET(20, close))` |
-| `GMEAN_BY(k, x)` | A | — | (key, X) -> unit of x | a single member counts | mean among the members with the same key (128-bit sum, then divide: valid even when the sum leaves i64; the level form is `XL_PARENT`) | `SUB(RET(20, close), GMEAN_BY(PARENT_ID(1), RET(20, close)))` |
+| `GMEAN_BY(k, x)` | A | — | (key, X) -> unit of x | a single member counts | mean among the members with the same key (128-bit sum, then divide: valid even when the sum leaves i64). k as in `GSUM`: an integer without a unit = level (0 whole market, 1..4), anything else = group key. `XL_PARENT(L, x)`, `GMEAN(L, x)` and `GMEAN_BY(L, x)` give the same tree | `SUB(RET(20, close), GMEAN_BY(1, RET(20, close)))` |
+| `GWMEAN_BY(k, w, x)` | A | — | (key, any numeric, X) -> unit of x | a member needs w valid and > 0; a single member counts | the w-weighted mean of x among the members with the same key: the weights keep 20 bits (sw = max(0, bitlen(max w) - 20)) and x shifts right by sx = max(0, bitlen(max|x|) + 20 + bitlen(n) - 62) so both sums fit i64; value = floor(sum((w>>sw)(x>>sx)) / sum(w>>sw)) * 2^sx, so a member always has a value. k as in `GSUM`: an integer without a unit = level (0 whole market, 1..4), anything else = group key. `GWMEAN(L, w, x)`, `GWMEAN_BY(PARENT_ID(L), w, x)` and `GWMEAN_BY(L, w, x)` give the same tree | `GWMEAN_BY(CS_QCUT(5, fund.mktcap), fund.mktcap, RET(20, close))` |
 | `ORD(k, x)` | A | — | (key, X) -> COUNT | non-members invalid (members as in `GRANK_BY`); a one-member group gives 0 | the **exact position** of x among the members with the same key: from 0 = largest, every group exactly 0..n-1. Equal values are broken by a fixed shuffle (the same rule as the stock picking ranks, never by ticker order); k as in `GSUM`: a unitless integer = level (`0` whole market, `1` industry, ...), anything else = group key | `ORD(1, x) == 0` = each industry's top one; for the top N use the reserved functions `GTOP(N, first, x)`, `CS_TOPK(k, x)` (5.2) |
-| `PARENT_ID(L)` | A | L 1..4 | -> CODE | no parent at level L -> invalid | the id of the level-L parent; a group key only | `RATIO(volume, GSUM(PARENT_ID(1), volume))` |
+| `GQUANT(q, first, x)` | A | q 0..100; `first` as in `GSUM`: an integer without a unit = level 0..4, anything else = group key | (key, X) -> unit of x (no BOOL) | one member = that member | the floor(q x (n - 1) / 100)-th smallest x among the group's members (as `WQUANT`); 50 = median, 0 = `GMIN`, 100 = `GMAX` | `close > GQUANT(50, 1, close)` |
+| `GRESID(k, x, z)` | A | — | (key, X, any numeric) -> unit of x | non-members invalid (members: k, x, z all valid); a group of one -> 0; x minus the group mean outside i64 -> the whole group invalid | least-squares residual of x on [1, z] among the members of the same group (128-bit sums for the means, rounded once). k as in `GSUM`: an integer without a unit = level (`0` whole market, `1` industry, ...), anything else = group key | `GRESID(1, RET(20, close), LOG(fund.mktcap))` = size-neutral inside each industry |
+| `PARENT_ID(L)` | D | L 1..4 | -> CODE | no parent at level L -> invalid | the id of the level-L parent; a group key only | `RATIO(volume, GSUM(PARENT_ID(1), volume))` |
 | `GSUM_ALL(L, x)` | A | L 0..4 | X -> same; BOOL -> COUNT | no member in the group that day -> the whole group invalid; sum leaves i64 -> the whole group invalid | members = every stock with x valid that day (the stock pool is not applied); the result is written to every cell of the group, including cells where x is invalid, outside the pool, or halted. With L = 0 every stock gets the same value | `SUB(RET(20, close), RATIO(GSUM_ALL(0, RET(20, close)), GCOUNT_ALL(0, RET(20, close))))` |
 | `GCOUNT_ALL(L, x)` | A | L 0..4 | anything -> COUNT | no member -> invalid (not 0) | the member count of `GSUM_ALL` | `MASK(RATIO(GSUM_ALL(1, close > ROLL_MEAN(60, close)), GCOUNT_ALL(1, close)) > 0.5, RET(20, close))` |
 | `CS_PEER_RANK(L, x)` | R | L 1..4 | X -> RATIO 0..1 | fewer than 2 members -> invalid | percentile inside the group | `CS_PEER_RANK(1, RET(20, close))` |
-| `CS_PEER_Z(L, x)` | A | L 1..4 | X -> RATIO | | z-score inside the group | `CS_PEER_Z(1, FN_EP(eps, close))` |
+| `CS_PEER_Z(L, x)` | A | L 1..4 | X -> RATIO | | z-score inside the group (= `GZ(L, x)`) | `CS_PEER_Z(1, FN_EP(eps, close))` |
 | `CS_REL_PARENT(L, x)` | R | L 1..4 | X -> same | | x - the mean of the group's members | `CS_REL_PARENT(1, RET(20, close))` |
-| `XL_PARENT(L, x)` | A | L 1..4 | X -> same | | the mean of the group's members; every member gets the same value | `RATIO(volume, XL_PARENT(1, volume))` |
+| `XL_PARENT(L, x)` | A | L 1..4 | X -> same | | the mean of the group's members; every member gets the same value; = `GMEAN_BY(PARENT_ID(L), x)`, both spellings give the same tree | `RATIO(volume, XL_PARENT(1, volume))` |
+| `GWMEAN(L, w, x)` | R | L 1..4 | (any numeric, X) -> unit of x | a member needs w > 0 | the w-weighted mean of x among the group's members (industry cap-weighted return); = `GWMEAN_BY(PARENT_ID(L), w, x)`, the same tree; a first argument of 0 or a group key gives `GWMEAN_BY` | `GWMEAN(1, fund.mktcap, RET(20, close))` |
 
 Common combinations:
 
 | Wanted | Written |
 |---|---|
 | percentile inside a group | `GPCT(k, x)` (= `RATIO(GRANK(k, x), ADD(SUB(GCOUNT(k, x), 1:COUNT), SUB(GCOUNT(k, x), 1:COUNT)))`, section 5.2) |
-| mean inside a group | `GMEAN_BY(k, x)` (any unit; by level: `XL_PARENT(L, x)`) |
-| z-score inside a group | `MASK(GSTD(k, x) > 0, RATIO(SUB(x, GMEAN_BY(k, x)), GSTD(k, x)))`; by level L: `XL_PARENT(L, x)`, `GSTD(L, x)` |
+| mean inside a group | `GMEAN(k, x)` (k = level or group key; same as `GMEAN_BY(k, x)`) |
+| weighted mean inside a group (e.g. cap-weighted) | `GWMEAN(k, w, x)` (k = level or group key; same as `GWMEAN_BY(k, w, x)`) |
+| minus the weighted group mean (industry neutralization) | `CS_NEUTRAL_IND(L, x, w)` = `SUB(x, GWMEAN(L, w, x))` |
+| z-score inside a group | `GZ(k, x)` (section 5.2; level 0 = `CS_Z(x)`, 1..4 = `CS_PEER_Z(L, x)`) |
 | how far above the group mean | `SUB(x, group mean)` |
+| median / quantile inside a group | `GQUANT(50, k, x)`; the top-25% cut `GQUANT(75, k, x)` |
+| remove another quantity's effect inside a group (regression residual) | `GRESID(k, x, z)`; the whole market as one group = `CS_NEUTRAL_SIZE(x, z)` |
 | everything as one group | `GSUM(0, x)`, or a constant key `GSUM(0:COUNT, x)` |
 | example keys | `PARENT_ID(1)` (industry), `CS_QCUT(5, ROLL_MEAN(20, volume))` (five volume buckets), `close > open` (up or down candle), `MONTH()`, `CORR_GROUP(...)` (chapter 6) |
 
 - CODE (code columns, `PARENT_ID`) is only a group key: no arithmetic, and it cannot be a whole formula.
 - In a condition the industry key can be written `industry`; in a score formula write `PARENT_ID(1)`.
+- Example: price above the industry median = `close > GQUANT(50, 1, close)` (`1` is the industry level; `PARENT_ID(1)` is the same). How far above the median (not pulled by outliers, steadier than "minus the mean") = `RET(20, close) - GQUANT(50, 1, RET(20, close))`; the median of each market-cap decile `GQUANT(50, CS_QCUT(10, fund.mktcap), x)`; the whole-market median `GQUANT(50, 0, x)`.
 - The percentile inside a group is 1 for the best stock of every group, so as a whole score it ties massively; rank by "how far above the group mean". When a percentile inside a group is wanted (e.g. `GPCT(g, x)`, inside the industry `CS_PEER_RANK(1, x)`), give `portfolio.tie_by` with the value being ranked (e.g. `"tie_by": "x"`) so ties are ordered by it.
 
 ### 4.9 Events
@@ -551,17 +578,14 @@ Common combinations:
 
 | Signature | Layer | Params | Units | Invalid and warm-up | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `FN_PS(a, b)` | R | — | (MONEY, QTY) -> MONEY | b <= 0 -> invalid | per-share value = total / shares | `FN_BP(FN_PS(equity, shares), close)` |
-| `FN_EP(a, b)` | R | — | (MONEY, PRICE) -> RATIO | b <= 0 -> invalid; a must be a per-share value | 4 x earnings per share / price (the inverse of P/E, quarter to year) | `FN_EP(eps, close)` |
-| `FN_BP(a, b)` | R | — | (MONEY, PRICE) -> RATIO | a <= 0 or b <= 0 -> invalid; a must be a per-share value | book value per share / price (the inverse of P/B) | `FN_BP(FN_PS(equity, shares), close)` |
-| `FN_ROE(a, b)` | R | — | (MONEY, MONEY) or (AMOUNT, AMOUNT) -> RATIO | b <= 0 -> invalid | 4 x net income / equity | `FN_ROE(net_income, equity)` |
 | `FN_YOY(N, x)` | R | N 1..1,260 | X -> RATIO | either <= 0 -> invalid; warm-up N | ln(x[t] / x[t-N]): log growth (0.1 is about 10%) | `FN_YOY(252, revenue_m)` |
 | `FN_EGROW(N, x)` | R | N 1..252 | X -> RATIO | base 0 -> invalid; warm-up N | (x[t] - x[t-N]) / \|x[t-N]\|: works with a negative base | `CS_PCT(FN_EGROW(252, eps))` |
 | `FN_GM_CHG(N, a, b)` | R | N 1..252 | (MONEY, MONEY) -> RATIO | b <= 0 -> invalid; warm-up N | a = gross profit, b = revenue: gross margin - the gross margin N days ago | `FN_GM_CHG(252, fund.gross, revenue)` |
-| `FN_ACCRUAL(N, a, b)` | A | N 1..252 | (MONEY, MONEY) -> RATIO | b <= 0 -> invalid; warm-up N | a = accruals, b = assets: 4 x a / the mean of today's assets and the assets N days ago | `NEG(FN_ACCRUAL(252, SUB(net_income, fund.cfo), assets))` |
 | `FN_DY(N, a, b)` | R | N 1..252 | (MONEY, PRICE) -> RATIO | b <= 0 -> invalid; a must be a per-share dividend column that has a value only on ex-dividend days; warm-up N-1 | dividends of the last N days / price = dividend yield | `FN_DY(250, dps, raw.close)` |
 
 Per-share values and totals do not mix: the first input of `FN_EP`, `FN_BP`, `FN_DY` must be a per-share value (`eps`, `dps`, `FN_PS(...)`); two money inputs where one is per-share and the other a total are rejected as well. To compare a total with market cap write `RATIO(total, fund.mktcap)`.
+
+The financial ratios derived by dividing data columns, `FN_PS`, `FN_EP`, `FN_BP`, `FN_ROE`, `FN_ACCRUAL`, are data, in section 7.4. The four left here all carry a window (N periods ago, a sum over the last N days) and are computations built from atoms.
 
 ### 4.11 Calendar
 
@@ -674,15 +698,18 @@ Examples:
 | frequent new highs over the last 120 days | `RT_ZF(120, close)` |
 | the more concentrated the joint price-volume states, the higher | `NEG(ENT_JOINT6(60, close, volume))` |
 
-### 4.13 Atoms with three or four inputs
+### 4.13 Operators with three or four inputs
 
 | Name | Inputs | Meaning | Status |
 |---|---|---|---|
-| `SELECT(c, a, b)` | (BOOL, X, X) -> X | c invalid -> invalid; a where c is true, else b | not accepted in formula text; write `c ? a : b` (= `FILL(MASK(c, a), MASK(NOT(c), b))`) |
+| `SELECT(c, a, b)` | (BOOL, X, X) -> X | c invalid -> invalid; a where c is true, else b | reserved function (section 5.1); not accepted in formula text, write `c ? a : b` (= `FILL(MASK(c, a), MASK(NOT(c), b))`) |
 | `REC2(K, x, c0, c1, c2)` | x: X; coefficients RATIO -> X; K 0..756 | second-order linear recursion y[t] = floor((c1 x y[t-1] + c2 x y[t-2] + c0 x x[t]) / 1e6); y = x on the two starting days; invalid for K steps after a start | not accepted in formula text |
-| `STATESCAN(x, up, lo)` | all three the same unit -> X | conditional state scan: in the up state, x falling below the previous value switches to the down state, otherwise take max(previous, up); the down state mirrors it | not accepted in formula text |
+| `GRESID(k, x, z)` | (key, X, any numeric) -> X | within-group regression residual (per day, per group; section 4.8) | accepted |
+| `STATESCAN(x, up, lo)` | all three the same numeric unit -> X | conditional state scan (per symbol, along the days): the first day is up and the value is up; in the up state, x below the previous value switches to the down state and the value becomes lo, otherwise the value is max(previous, up); the down state mirrors it (x above the previous value switches to up with the value up, otherwise min(previous, lo)). Any input invalid -> invalid that day, restart on the next day all three are valid | accepted |
 
-A node of a formula tree has only two children, so these three do not fit; writing one returns `APX_UNSUPPORTED`.
+`STATESCAN` example: a ratcheting trailing stop `STATESCAN(close, ROLL_MAX(20, close) * 0.9, ROLL_MIN(20, close) * 1.1)`: in the up state the stop only moves up, a close below it flips the line above the price; `close > STATESCAN(close, ROLL_MAX(20, close) * 0.9, ROLL_MIN(20, close) * 1.1)` = currently in the up state.
+
+A node of a formula tree has only two children: a three-input operator gets one extra internal node in the tree that holds its second and third inputs (not counted in the complexity node count, never shown). The four-input `REC2` still returns `APX_UNSUPPORTED`.
 
 ---
 
@@ -693,7 +720,7 @@ There are only two layers: an **atom** is a smallest operation, implemented dire
 - **Marked R in chapter 4**: their names are in the operator tables. 5.1 lists the atom definition of every one, bit-identical to writing the name.
 - **Expanded at text level** (5.2): replaced by atoms when the formula is read, with no operator number of their own. The expanded nodes count toward the formula size.
 
-### 5.1 Reserved functions marked R and their atom definitions (38)
+### 5.1 Reserved functions marked R and their atom definitions (41)
 
 The reserved function and the atom form on the right are bit-identical (value, valid bits, unit). An empty "Condition" = for all inputs; otherwise bit-identical within that range.
 
@@ -703,6 +730,7 @@ The reserved function and the atom form on the right are bit-identical (value, v
 | `OR(a, b)` | `NOT(MUL(NOT(a), NOT(b)))` | |
 | `MAX2(a, b)` | `FILL(MASK(GT(a, b), a), MASK(VALID(a), b))` | |
 | `MIN2(a, b)` | `FILL(MASK(LT(a, b), a), MASK(VALID(a), b))` | |
+| `SELECT(c, a, b)` (written `c ? a : b`) | `FILL(MASK(c, a), MASK(NOT(c), b))` | |
 | `ROLL_RANK(N, x)` | `RATIO(WRANK(N, x), 2*(N-1):COUNT)` | |
 | `CS_PCT(x)` | `RATIO(GRANK(0, x), MUL(2:RATIO, SUB(GCOUNT(0, x), 1:COUNT)))` | |
 | `CS_PEER_RANK(L, x)` | `RATIO(GRANK(L, x), MUL(2:RATIO, SUB(GCOUNT(L, x), 1:COUNT)))` | |
@@ -724,30 +752,33 @@ The reserved function and the atom form on the right are bit-identical (value, v
 | `COUNT(N, b)` | `WSUM(N, b)` | |
 | `EV_POST_N(N, b)` | `LAG(N, b)` | |
 | `EV_PULSE(c)` | `VALID(c)` | c is a column |
-| `FN_PS(a, b)` | `MASK(GT(b, 0), RATIO(a, b))` |  |
-| `FN_BP(a, b)` | `MASK(MUL(GT(a, 0), GT(b, 0)), RATIO(a, b))` |  |
-| `FN_EP(a, b)` | `MASK(GT(b, 0), MULDIV(4, a, b))` |  |
-| `FN_ROE(a, b)` | `MASK(GT(b, 0), MULDIV(4, a, b))` |  |
 | `FN_DY(N, a, b)` | `MASK(GT(b, 0), RATIO(WSUM(N, FILL(a, 0:MONEY)), b))` | a >= 0 (dividends) |
 | `FN_EGROW(N, x)` | `RATIO(SUB(x, LAG(N, x)), ABS(LAG(N, x)))` |  |
 | `FN_GM_CHG(N, a, b)` | `DIFF(N, MASK(GT(b, 0), RATIO(a, b)))` |  |
 | `CS_REL_RET(N, L, x)` | r = `RET(N, x)`: `MASK(GT(GCOUNT(L, r), 1:COUNT), SUB(r, RATIO(GSUM(L, r), GCOUNT(L, r))))` |  |
 | `CS_RANK_MEAN(N, x)` | p = `CS_PCT(x)`: `MASK(MUL(VALID(p), NOT(LT(MUL(2:COUNT, WSUM(N, VALID(p))), N:COUNT))), RATIO(WSUM(N, FILL(p, 0:RATIO)), WSUM(N, VALID(p))))` |  |
 | `RVOL(N, x)` | `ROLL_STD(N, LOGR(x, LAG(1, x)))` |  |
+| `SKEW(N, x)` | `WSKEW(N, LOGR(x, LAG(1, x)))` |  |
+| `KURT(N, x)` | `WKURT(N, LOGR(x, LAG(1, x)))` |  |
+| `ACORR(N, k, x)` | `WACORR(N, k, LOGR(x, LAG(1, x)))` |  |
 | `EV_DAYS_SINCE(N, b)` | s = `SUB(SCANSUM(FILL(b, 0:BOOL), 1:DAYS), 1:DAYS)`: `MASK(NOT(GT(s, N:DAYS)), s)` |  |
 | `UP_STREAK(N, x)` | c = `FILL(GT(x, LAG(1, x)), 0:BOOL)`: `MASK(MUL(VALID(x), VALID(LAG(N, VALID(x)))), MIN2(SCANSUM(NOT(c), MUL(c, 1:COUNT)), N:COUNT))` |  |
 | `DOWN_STREAK(N, x)` | as `UP_STREAK` with `LT` in place of `GT` |  |
 | `EV_EARN_DRIFT(N, a, b)` | e = `EV_CHANGE(b)`, base = `LATCH(e, LAG(1, a))`, s = `SUB(SCANSUM(e, 1:DAYS), 1:DAYS)`: `MASK(MUL(GT(base, 0), LT(s, N:DAYS)), RATIO(SUB(a, base), base))` |  |
 | `EV_IDX_CHG(N, b)` | e = `EV_CHANGE(b)`, s = `SUB(SCANSUM(e, 1:DAYS), 1:DAYS)`, m = `RATIO(SUB(N:DAYS, s), N:DAYS)`: `MASK(VALID(WSUM(N+1, b)), FILL(MASK(LT(s, N:DAYS), FILL(MASK(b, m), MASK(NOT(b), NEG(m)))), 0:RATIO))` | b only 0/1 |
 | `CS_NEUTRAL_COUNTRY(a, b)` | `CS_NEUTRAL_IND(3, a, b)` |  |
+| `GWMEAN(L, w, x)` | `GWMEAN_BY(PARENT_ID(L), w, x)` |  |
+| `CS_NEUTRAL_IND(L, a, b)` | `SUB(a, GWMEAN(L, b, a))` |  |
+| `CS_NEUTRAL_SIZE(a, b)` | `GRESID(0:COUNT, a, b)` |  |
 | `VOL_RATIO(N, x)` | s = `WSUM(N, LAG(1, x))`: `MASK(GT(s, 0), MULDIV(N, x, s))` | x >= 0 (volume, turnover) |
 
 - `2*(N-1)`, `N-1`, `N+1`, `k/10` in a definition are the numbers after the parameter is substituted (the divisor of `ROLL_RANK(60, x)` is `118:COUNT`).
 - A leading "s = ...", "c = ..." in a long definition only writes a repeated sub-formula once; expanded, it is the same atom tree.
 - N of `RET`, `RET_SKIP`, `DIST_HIGH`, `DIST_LOW`, `FN_YOY` goes up to 1,260: above 252 the formula is expanded into the atom definition of the table when it is read (`LAG`, `ROLL_MAX` / `ROLL_MIN`, `LOGR` already go to 1,260), and the nodes count as expanded; whatever N is, it is the same definition with the same result.
-- The division in `FN_PS`, `FN_BP`, `FN_EP`, `FN_DY` uses the two unit rules of chapter 3: money / shares -> money per share (MONEY), money per share / price -> ratio. The reserved functions also check that the first input is a per-share value; the atom forms do not.
+- The division in `FN_DY` uses the unit rule of chapter 3: money per share / price -> ratio. The reserved function also checks that the first input is a per-share value; the atom form does not.
+- The financial ratios of section 7.4 (data) also each have a bit-identical atom form, listed in that section.
 
-### 5.2 Reserved functions expanded at text level (29)
+### 5.2 Reserved functions expanded at text level (35)
 
 Both `NAME` and `apx.NAME` are accepted. They expand to the atoms on the right, so the three hardware targets agree automatically.
 
@@ -767,10 +798,12 @@ Both `NAME` and `apx.NAME` are accepted. They expand to the atoms on the right, 
 | `STREAK(b)` | `SCANSUM(NOT(b), MUL(b, 1:COUNT))` | COUNT | number of consecutive days b is true (false today = 0); invalid on a day b is invalid and until b is next false; invalid before the first false | `STREAK(foreign_net > 0) >= 3` |
 | `SINCE(b)` | `SCANSUM(b, 1:DAYS) - 1:DAYS` | DAYS | trading days since b was last true (0 on a true day); invalid on a day b is invalid and until b is next true; invalid before the first true | `SINCE(EV_CHANGE(revenue_m) && revenue_m >= ROLL_MAX(250, revenue_m)) <= 20` |
 | `STATE(on, off)` | `LATCH(on \|\| off, MUL(on, 1:COUNT)) > 0:COUNT` | BOOL | true from a day on is true, false from a day off is true, held otherwise; both true the same day = true; a day with on or off invalid keeps the previous state; invalid before the first on or off | `STATE(close > ROLL_MEAN(250, close), close < ROLL_MEAN(60, close))` |
-| `GMEAN(first, x)` | `RATIO(GSUM(first, x), GCOUNT(first, x))` | unit of x | mean of x over the group's members (floored), written to every member; members = in the stock pool that day with x valid (and the key valid for a group key); first as in GSUM: a unitless integer = level (0 whole market), anything else = group key; COUNT x gives RATIO; non-members invalid | `GMEAN(CS_QCUT(10, fund.mktcap), RET(20, close))` |
+| `GMEAN(first, x)` | `GMEAN_BY(first, x)`; COUNT x: `GMEAN_BY(first, RATIO(x, 1:COUNT))` | unit of x | mean of x over the group's members (floored; valid even when the sum leaves i64), written to every member; members = in the stock pool that day with x valid (and the key valid for a group key); first as in GSUM: a unitless integer = level (0 whole market), anything else = group key; COUNT x gives RATIO; non-members invalid. `GMEAN(L, x)` and `XL_PARENT(L, x)` give the same tree; for a COUNT x they are different identities (the units differ: `GMEAN` gives RATIO, `XL_PARENT` gives COUNT) | `GMEAN(CS_QCUT(10, fund.mktcap), RET(20, close))` |
 | `GDEMEAN(first, x)` | `MASK(GCOUNT(first, x) > 1:COUNT, x - GMEAN(first, x))` | unit of x | x minus its group mean (GMEAN); a group of one -> invalid; non-members invalid. x needs a 1e6 fixed-point unit (PRICE, RATIO, MONEY, ...) | `GDEMEAN(CORR_GROUP(RATIO(close, LAG(1, close))), RET(20, close))` |
 | `GTOP(N, first, x)` | `ORD(first, x) < N` | BOOL | x is among the N largest in its group (exact ranks: exactly N per group, all of a smaller group); first = a level number (0 whole market, 1 industry, ...) or a group key; equal values broken by a fixed shuffle, the same rule as the stock picking ranks; non-members invalid | `MASK(GTOP(3, 1, fund.mktcap), RET(20, close))` (the 3 largest in each industry) |
+| `GZ(first, x)` | `RATIO(SUB(x, GMEAN_BY(first, x)), GSTD(first, x))` | RATIO | z-score of x within its group = (x - group mean) / group population std; first as in `GSTD`: a unitless integer = level (`GZ(0, x)` = `CS_Z(x)`, `GZ(L, x)` = `CS_PEER_Z(L, x)`, bit for bit), anything else = group key; fewer than 2 members, std 0, or x - mean out of range -> invalid; non-members invalid | `GZ(CS_QCUT(10, fund.mktcap), RET(20, close))` |
 | `CS_TOPK(k, x)` | `ORD(0, x) < k` | BOOL | x is among the k largest in the stock pool that day (exactly k stocks); equal values broken by a fixed shuffle; x invalid or outside the pool -> invalid | `MASK(CS_TOPK(50, fund.mktcap), RET(20, close))` |
+| `INV_VOL_KEY()` | `INV_VOL_KEY(20, RET(1, close))` | COUNT | inverse-volatility weight key: the inverse of the 20-day return volatility (steadier is larger); the volatility `weighting="inv_vol"` uses. For another window or series write the atom `INV_VOL_KEY(N, x)` (4.6) | `MASK(CS_PCT(INV_VOL_KEY()) > 0.5, RET(20, close))` |
 | `MKT_SHARE(b)` | `MKT_MEAN(MASK(common == 1, MUL(b, 1:RATIO)))` | RATIO | share of common stocks with b true, 0..1 (floored to 1e-6), one value for every stock; denominator = common stocks with b valid that day, stock pool not applied; none valid -> invalid; no common-stock flag -> error | `MKT_SHARE(close > ROLL_MEAN(60, close)) < 0.3 ? 0.5 : 1` |
 | `MKT_COUNT(b)` | `GSUM_ALL(0, MASK(common == 1, b))` | COUNT | number of common stocks with b true, one value for every stock; counts common stocks with b valid, stock pool not applied; none valid -> invalid; no common-stock flag -> error | `MKT_COUNT(raw.close >= raw.limit_up)` |
 | `BASKET_MEAN(sel, x)` | `MKT_MEAN(MASK(sel, x))` | unit of x | equal-weighted mean of x over the stocks with sel true (floored), written to every stock; stock pool not applied; none of them with x valid that day -> invalid | `CORR(250, RET(1, close), BASKET_MEAN(symbol == "2330", RET(1, close)))` |
@@ -781,15 +814,21 @@ Both `NAME` and `apx.NAME` are accepted. They expand to the atoms on the right, 
 | `CROSS_DOWN(a, b)` | `a < b && !(LAG(1, a) < LAG(1, b))` | BOOL | the day a moves below b (a < b today, a >= b yesterday); any of today's or yesterday's values invalid -> invalid; same unit | `CROSS_DOWN(foreign_net, 0)` |
 | `MONTH_START()` | `MDAY() < LAG(1, MDAY())` | BOOL | 1 on the first trading day of a calendar month, else 0; invalid on the panel's first day | `MONTH_START()` |
 | `QUARTER_START()` | `MONTH_START() && (MONTH() - 1) % 3 == 0` | BOOL | 1 on the first trading day of January, April, July and October, else 0; invalid on the panel's first day | `QUARTER_START()` |
+| `EVERY(n, k)` | `MOD(DAY_INDEX(), n) == k` | BOOL | once every n trading days, offset by k: day d counted from the panel's first day (0-based) is 1 when d mod n = k, else 0; same for every stock; n 1..1,260, k 0..n-1 | `EVERY(21, 5)` |
 | `YEAR_START()` | `MONTH() < LAG(1, MONTH())` | BOOL | 1 on the first trading day of a year, else 0; invalid on the panel's first day | `YEAR_START()` |
 | `PREV_MONTH_RET(p)` | `RATIO(AT_MONTH_START(LAG(1, p)), AT_MONTH_START(LAG(1, AT_MONTH_START(LAG(1, p))))) - 1` | RATIO | last calendar month's return = p on last month's final trading day / p on the final trading day of the month before - 1, same value all month; either p invalid (or a zero denominator) -> invalid all month | `CS_PCT(PREV_MONTH_RET(close))` |
 | `ROLL_MEAN_AVAIL(N, x)` | `RATIO(WSUM($N, FILL(x, 0)), WSUM($N, VALID(x)))` | unit of x | mean of x over the days it is valid within the last N days (floored; invalid days are left out of the denominator); invalid for the panel's first N - 1 days; all invalid in the window -> invalid; N 1..1,260 | `ROLL_MEAN_AVAIL(20, foreign_net)` |
 | `VWAP(N)` | `RATIO(WSUM($N, px.turnover), WSUM($N, volume))` | MONEY | N-day volume-weighted average price = total turnover / total shares traded (TWD per share, unadjusted: compare with raw.close); any invalid cell in the window, zero shares, or a turnover total outside fixed point -> invalid; N 1..1,260. Needs the panel columns px.turnover and volume | `raw.close > VWAP(20)` |
+| `REG_SLOPE(N, y, x)` | `WREG(N, 0, y, x)` | RATIO | slope of the regression of y on x over the last N days (how much y moves per 1 of x); N 3..1,260, y and x share one unit; any invalid cell in the window or x constant -> invalid | `REG_SLOPE(60, RET(1, close), MKT_MEAN(RET(1, close))) < 0.8` |
+| `REG_INTERCEPT(N, y, x)` | `WREG(N, 1, y, x)` | unit of y | intercept (the mean of y when x is 0); otherwise as `REG_SLOPE` | `CS_PCT(REG_INTERCEPT(60, RET(1, close), MKT_MEAN(RET(1, close))))` |
+| `REG_RESID(N, y, x)` | `WREG(N, 2, y, x)` | unit of y | today's residual (today's y minus the line at today's x); otherwise as `REG_SLOPE` | `CS_PCT(REG_RESID(60, RET(1, close), MKT_MEAN(RET(1, close))))` |
+| `REG_R2(N, y, x)` | `WREG(N, 3, y, x)` | RATIO 0..1 | R squared (how much of y's variation the line explains); otherwise as `REG_SLOPE` | `REG_R2(120, RET(1, close), MKT_MEAN(RET(1, close))) < 0.2` |
+| `REG_T(N, y, x)` | `WREG(N, 4, y, x)` | RATIO | t-stat of the slope (slope / standard error); otherwise as `REG_SLOPE` | `REG_T(60, RET(1, close), MKT_MEAN(RET(1, close))) > 2` |
 
 - "Start of month" is `MDAY() < LAG(1, MDAY())` (today's day number is smaller than the previous trading day's). It assumes adjacent trading days are less than 28 calendar days apart.
 - Return of the previous calendar month = `PREV_MONTH_RET(close)`; listed for 2 years = `LISTED_TDAYS() >= 500`; the highest price since listing = the `LISTED_DAYS` example.
-- `MKT_MEAN`, `EW_INDEX`, `MKT_SHARE`, `MKT_COUNT`, `BASKET_MEAN`, `MONTH_START`, `QUARTER_START` and `YEAR_START` give the same value for every stock, so they can go straight into `exposure` and `rebalance_when` (chapter 9).
-- Inputs marked X in one function are the same kind of quantity: a constant without a unit takes the unit of the one that has it (in `CLIP(close, 10, 100)`, 10 and 100 are PRICE). The first argument of `GMEAN` and `GDEMEAN` works as in `GSUM`: an integer without a unit = level (0 whole market, 1..4), anything else = group key.
+- `MKT_MEAN`, `EW_INDEX`, `MKT_SHARE`, `MKT_COUNT`, `BASKET_MEAN`, `MONTH_START`, `QUARTER_START`, `YEAR_START` and `EVERY` give the same value for every stock, so they can go straight into `exposure` and `rebalance_when` (chapter 9). `EVERY(n, k)` counts from the panel's first day and ignores warm-up; the portfolio's `apx.EVERY(n)` (one argument) is still "every n days after warm-up" = `rebalance_days`.
+- Inputs marked X in one function are the same kind of quantity: a constant without a unit takes the unit of the one that has it (in `CLIP(close, 10, 100)`, 10 and 100 are PRICE; the same rule as for atoms, section 2.3). The first argument of `GMEAN` and `GDEMEAN` works as in `GSUM`: an integer without a unit = level (0 whole market, 1..4), anything else = group key. An input can be declared "X, COUNT turned into RATIO" (the x of `GMEAN` today): a COUNT input is replaced by `RATIO(x, 1:COUNT)` before expansion, and that expansion is printed as written.
 - `EW_INDEX` measured on the Taiwan panel (4,127 days): maximum relative error against a double-precision reference 6.07e-3, and 3.86e-4 inside any 250 days.
 - `SQRT` on integer units is also a text-level expansion: for COUNT / DAYS, `SQRT(n)` = `SQRT(RATIO(n, 1:same unit))`; for AMOUNT, `SQRT(a)` = `MUL(1000, SQRT(RATIO(a, 1000000:AMOUNT)))` (three decimals).
 
@@ -967,6 +1006,30 @@ Key points:
 - Market-level columns have the same value for every stock; random search does not pick them as leaves by itself, they are used only where a formula names them.
 - `eps` is the average single-quarter EPS of the last four quarters, so `FN_EP(eps, close)` = the inverse of the trailing P/E.
 
+### 7.4 Derived data: financial ratios from data columns
+
+These 5 are data: financial ratios derived by dividing data columns, so they are data like the columns. They are still written as calls (`FN_EP(earnings per share, price)`); names, parameters, units and results are the same as before; the noun list marks them `data`.
+
+| Signature | Params | Units | Invalid and warm-up | In plain words | Example |
+|---|---|---|---|---|---|
+| `FN_EP(a, b)` | — | (MONEY, PRICE) -> RATIO | b <= 0 -> invalid; a must be a per-share value | earnings yield, the inverse of P/E: 4 x earnings per share / price (quarter to year) | `FN_EP(eps, close)` |
+| `FN_BP(a, b)` | — | (MONEY, PRICE) -> RATIO | a <= 0 or b <= 0 -> invalid; a must be a per-share value | the inverse of P/B: book value per share / price | `FN_BP(FN_PS(equity, shares), close)` |
+| `FN_PS(a, b)` | — | (MONEY, QTY) -> MONEY | b <= 0 -> invalid | per-share value: total / shares | `FN_BP(FN_PS(equity, shares), close)` |
+| `FN_ROE(a, b)` | — | (MONEY, MONEY) or (AMOUNT, AMOUNT) -> RATIO | b <= 0 -> invalid | return on equity: 4 x net income / equity (quarter to year) | `FN_ROE(net_income, equity)` |
+| `FN_ACCRUAL(N, a, b)` | N 1..252 | (MONEY, MONEY) -> RATIO | b <= 0 -> invalid; warm-up N | accrual ratio: a = accruals, b = assets, 4 x a / the mean of today's assets and the assets N days ago | `NEG(FN_ACCRUAL(252, SUB(net_income, fund.cfo), assets))` |
+
+- Per-share values and totals do not mix: the first input of `FN_EP`, `FN_BP` must be a per-share value (`eps`, `FN_PS(...)`); two money inputs where one is per-share and the other a total are rejected as well. To compare a total with market cap write `RATIO(total, fund.mktcap)`.
+- The divisions use the two unit rules of chapter 3: money / shares -> money per share (MONEY), money per share / price -> ratio.
+
+Bit-identical atom forms (value, valid bits, unit; checked one by one like those of chapter 5). The atom forms do not check that the first input is a per-share value. `FN_ACCRUAL` is a statistic fused into a single rounding and has no atom form.
+
+| Name | Atom form |
+|---|---|
+| `FN_EP(a, b)` | `MASK(GT(b, 0), MULDIV(4, a, b))` |
+| `FN_BP(a, b)` | `MASK(MUL(GT(a, 0), GT(b, 0)), RATIO(a, b))` |
+| `FN_PS(a, b)` | `MASK(GT(b, 0), RATIO(a, b))` |
+| `FN_ROE(a, b)` | `MASK(GT(b, 0), MULDIV(4, a, b))` |
+
 ---
 
 ## 8. Stock pool
@@ -1061,8 +1124,17 @@ The old form exists only for older result libraries; write VQL in anything new. 
 |---|---|---|
 | Values | real numbers; a comparison with a missing value is false | fixed point; cells where the formula is invalid are outside the pool |
 | Time series | none | every operator |
-| Functions | element-wise `abs sqrt log exp has pow min max where`; cross-section of the day `sum mean sd var count quantile min max` | chapter 4 |
-| Example | `fund.mktcap >= quantile(fund.mktcap, 0.7)`, `industry == 24 && fund.mktcap > 10e9` | `CS_PCT(fund.mktcap) >= 0.7`, `industry in {24} && fund.mktcap > 10e9` |
+| Functions | element-wise `abs sqrt log exp has min max where`; cross-section of the day `sum mean count quantile min max` | chapter 4 |
+| Example | `fund.mktcap >= quantile(fund.mktcap, 0.7)`, `industry == 24 && fund.mktcap > 10e9` | `fund.mktcap >= GQUANT(70, 0, fund.mktcap)`, `industry in {24} && fund.mktcap > 10e9` |
+
+**How the old form is translated.** The old form has no evaluator of its own: it is translated to VQL at compile time and computed on the same path as VQL; `universe_lang`, the stored condition text and the panel identity stay as they are. The translation:
+
+- Every comparison and logical operator is wrapped as "invalid counts as false" (`FILL(…, 0:BOOL)`), which reproduces the old rule that a comparison with a missing value is false.
+- `mean(x)` = `RATIO(GSUM(0, x), GCOUNT(0, x))`; `quantile(x, q)` = `GQUANT(q × 100, 0, x)`, where q × 100 must be an integer from 0 to 100; `sum`, `count` and one-argument `min`, `max` = `GSUM`, `GCOUNT`, `GMIN`, `GMAX` at level 0.
+- **Arithmetic across units is converted to ratios first** (for example `eps * 4 * shares / equity`, `close * volume`): the old form has no units, so when the direct translation does not pass the unit rules, every numeric column becomes `RATIO(column, 1:<its unit>)` before the arithmetic.
+- **An outermost division on either side of a comparison is cross-multiplied** (`x / y > z`): it becomes a multiplication and is not rounded before the comparison — with a positive denominator `x` is compared with `z·y`, with a negative one the direction flips, and a zero denominator counts as false. With a division on both sides each is moved. Inner divisions floor to 1e-6 as in VQL.
+- **Limit**: a ratio is fixed point at 1e-6. A value inside cross-unit arithmetic (including the products made by cross-multiplying) above about 9.2e12 makes that cell invalid and the condition false; a total-amount column (for example `fund.mktcap`) in such arithmetic is the usual way to reach it.
+- What cannot be translated returns `E_OLD_SYNTAX` with the VQL spelling in the hint: `sd`, `var` (sample versions; VQL's `GSTD` is the population one), `pow`, a `quantile` whose percentile is not an integer, division by the constant 0.
 
 ---
 
@@ -1091,7 +1163,7 @@ A score formula only produces each day's ranking. **How the ranking becomes hold
 | `weight` | numeric formula (per day and stock) | not used | on a rebalance day each stock's weight is in proportion to this value | `{"max_positions":20,"weight":"fund.mktcap"}` |
 | `tie_by` | numeric formula (per day and stock) | not used (ties follow the fixed shuffle) | when picking the top N, stocks with the same score are ordered by this value, larger first; stocks without a value come last among the tied; equal values then `mix64((entity_id<<32)^day)`, then the symbol index. Only orders ties: the score and the weights are unchanged and the warm-up is not raised; for smaller first write `NEG(...)` | `{"tie_by":"fund.mktcap"}` |
 | `group_by` | formula (per day and stock; a number or a condition, no `pos.*`) | not used | what a group is: stocks with the same value on a day are one group; given together with `group_cap` (9.5a) | `{"group_by":"CORR_GROUP(RET(1, close))","group_cap":3}` |
-| `group_cap` | 1..255 | not used | at most this many holdings per group: on a rebalance day names are taken in rank order, a name whose group is full is skipped (9.5a) | as above |
+| `group_cap` | positive integer | not used | at most this many holdings per group: on a rebalance day names are taken in rank order, a name whose group is full is skipped (9.5a) | as above |
 | `add_when` | BOOL formula, may use `pos.*` and `pos.size`, `pos.adds`, `pos.cuts`, `pos.avg_ret` | not used | add condition: at the close where it turns from false to true for a holding, add once at the next fill (9.5b) | `{"add_when":"pos.ret >= 0.1","size_init":0.5}` |
 | `cut_when` | as `add_when` | not used | cut condition: when it triggers, sell `cut_size` of the current position (9.5b) | `{"cut_when":"pos.ret >= 0.2"}` |
 | `add_size` | > 0 | 1 | units per add (multiples of the entry unit) | `{"add_when":"pos.ret >= 0.1","add_size":0.5}` |
@@ -1100,7 +1172,7 @@ A score formula only produces each day's ranking. **How the ranking becomes hold
 | `max_size` | >= 1 | no cap | cap per holding, in entry units | `{"add_when":"pos.ret >= 0.1 * (pos.adds + 1)","max_size":3}` |
 | `gross_max` | 0.01..2 | 1 | gross cap: weights may sum to at most this share of the account; > 1 = margin (give `margin_rate`) (9.5b) | `{"gross_max":0.8}` |
 | `cash_min` | 0..0.99 | 0 | minimum cash share; the stricter of it and `gross_max` applies | `{"cash_min":0.1}` |
-| `add_mode` | `cash` / `scale` | `cash` | adds beyond the gross cap: only the room left / shrink the other holdings | `{"add_mode":"scale"}` |
+| `add_mode` | `cash` / `scale` | `cash` | adds beyond the gross cap: only the room left / shrink the other holdings (as a formula, 9.12: wrap the add term in `MIN2(..., acct.room)` / multiply by `MIN2(1, g / acct.gross_req)`) | `{"add_mode":"scale"}` |
 | `max_new` | >= 1 | no limit | at most this many new names per rebalance (the best-ranked; the other slots stay cash) | `{"max_new":3}` |
 | `cash_rate` | annual rate, e.g. 0.015 | 0 | annual interest on cash (long-only) | `{"cash_rate":0.015}` |
 | `margin_rate` | annual rate, e.g. 0.05 | not used | annual margin rate (required when `gross_max` > 1) | `{"gross_max":1.5,"margin_rate":0.05}` |
@@ -1110,7 +1182,8 @@ A score formula only produces each day's ranking. **How the ranking becomes hold
 | `exit_below` | PRICE formula, may use `pos.entry`, `pos.peak` | not used | intraday stop level: sold once the day's low touches it, without waiting for the close (9.6a) | `{"exit_below":"pos.entry * 0.92"}` |
 | `exit_above` | PRICE formula, may use `pos.entry`, `pos.peak` | not used | intraday take-profit level: sold once the day's high touches it (9.6a) | `{"exit_above":"pos.entry * 1.2"}` |
 | `lock` | `limit` / `none` | omitted: simulated when the panel has the exchange limit prices | rule exits on locked limit days: `limit` moves a blocked sale to the next trading day, `none` does not simulate locks (9.6a) | `{"exit_below":"pos.entry * 0.92","lock":"none"}` |
-| `grid` | an object: name -> values to try | not used | threshold grid: numbers to try in `exit_when` / `keep_when` / `exit_below` / `exit_above` are written `$name` and each name's values are given here (9.11) | `{"exit_when":"pos.drawdown >= $dd","grid":{"dd":[0.06,0.1,0.14]}}` |
+| `grid` | an object: name -> values to try | not used | numbers to try: written `$name` in the formulas, each name's values given here (9.11); also sets the search's base grid: `pl` (long threshold), `reb` (rebalance days), `n` (positions), `wk` (weight key) (9.11a) | `{"exit_when":"pos.drawdown >= $dd","grid":{"dd":[0.06,0.1,0.14]}}`, `{"grid":{"reb":[5,10,21]}}` |
+| long threshold `apx.IN_TOP(p)` | in `hold`; p is an integer 0..200 or a `$name` | not written: tries 160 / 170 / 180 / 190 | buy only stocks whose score ranks at or above percentile p/200 (180 = top 10%, 190 = top 5%); = `GE(CS_PCT(apx.SCORE()), p / 200)` | `{"hold":"apx.IN_TOP(190)"}`, `{"hold":"apx.IN_TOP($pl)","grid":{"pl":[150,170,190]}}` |
 | `grid_by` | a screening expression (the ordering, 11.3) | with `grid`: `apx.SHARPE`; without: combined score | orders a formula's combinations (larger first); without `grid` it orders the portfolio settings | `{"exit_when":"pos.drawdown >= $dd","grid":{"dd":[0.06,0.1,0.14]},"grid_by":"apx.CALMAR"}` |
 | `initial_capital` | 1..1e12 | 1,000,000 | starting capital; given = a share-level account is computed | `{"initial_capital":4000000}` |
 | `lot` | `odd` / `board` | `odd` | odd lots (1 share) / board lots only (1,000 shares) | `{"lot":"board"}` |
@@ -1196,7 +1269,7 @@ Price x volume (`MUL(close, volume)`) fails the unit rules; for traded value use
 |---|---|
 | `equal` | 1 / number of stocks each; with `max_weight` and (number of stocks x cap) below 100%, each = the cap and the rest is cash |
 | `score` | by rank: higher weighs more; weights are rounded to basis points and the remainder goes to the top-ranked stock |
-| `inv_vol` | by inverse volatility: steadier weighs more; stocks with zero volatility are not candidates |
+| `inv_vol` | by inverse volatility: steadier weighs more; stocks with zero volatility are not candidates. The volatility is `INV_VOL_KEY(20, RET(1, close))` (20-day returns, 4.6); for another window or series write the key `INV_VOL_KEY(N, x)` |
 
 ### 9.5 Exits: `exit_when`, `keep_when`, `reentry_days`
 
@@ -1218,7 +1291,7 @@ Shape rules:
 | `pos.*` goes inside a comparison | `>`, `>=`, `<`, `<=` (or `GT`, `LT`) |
 | one side is linear in the state leaves | times a constant, plus or minus a constant; coefficients within +-100 |
 | the other side is a constant, or a whole market-only formula | for instance `-2 * ROLL_STD(20, RET(1, close))` |
-| comparisons are joined with `&&`, `\|\|`, `!` | at most 6 comparisons per rule (equal ones count once); more -> `E_POS_ATOMS` |
+| comparisons are joined with `&&`, `\|\|`, `!` | equal comparisons count once |
 | a sub-condition without `pos.*` | is one market condition, compiled like any condition (for instance `close < ROLL_MEAN(20, close)`) |
 
 Behaviour:
@@ -1232,7 +1305,7 @@ Behaviour:
 
 ### 9.5a Group cap: `group_by`, `group_cap`
 
-"At most N holdings per group". The two arguments go together: `group_by` says what a group is (a formula per day and stock; **stocks with the same value on a day are one group**), `group_cap` is the number of holdings per group (1..255).
+"At most N holdings per group". The two arguments go together: `group_by` says what a group is (a formula per day and stock; **stocks with the same value on a day are one group**), `group_cap` is the number of holdings per group (a positive integer).
 
 - On a rebalance day names are taken in exact-rank order: stop once the target has `max_positions` names; a name whose group already has `group_cap` names in the target is skipped and the next one is taken.
 - **Holdings count too**: holdings kept by `keep_when` are walked first in rank order, and the lower-ranked ones of a full group are sold as usual. Only a name locked limit-down can leave a group over the cap (it is still held and takes a slot of its group).
@@ -1299,7 +1372,7 @@ Every holding is looked at once a day: when the day's low <= the stop level (or 
 | `pos.entry` | PRICE | the entry fill price (adjusted-price convention) |
 | `pos.peak` | PRICE | the most favourable **closing price** since entry (the entry price included) |
 
-A level formula = the extreme of 1-3 terms (`MAX2` for `exit_below`, `MIN2` for `exit_above`); each term is `constant x pos.entry + constant x pos.peak + a market-only price formula`.
+A level formula = the extreme of one or more terms (`MAX2` for `exit_below`, `MIN2` for `exit_above`); each term is `constant x pos.entry + constant x pos.peak + a market-only price formula`.
 
 | Plain words | Confirmed at the close (`exit_when`) | Intraday touch |
 |---|---|---|
@@ -1329,7 +1402,7 @@ When the user says only "stop at 8%, take profit at 20%", write the touch form; 
 | Buy cost | commission 0.1425% | |
 | Sell cost | commission 0.1425% + transaction tax 0.3% | the tax on ETFs is 0.1% |
 | Minimum commission | 20 per order (`min_fee`) | counted only in the share-level account |
-| Turnover cap | none | `max_turnover_bp` in `config` |
+| Turnover cap | none | the fourth argument of `apx.PICK` (9.12; `0.3` = new names at most 30% of the names held), or `max_turnover_bp` in `config` (`3000` = the same thing) |
 
 - Costs and trading rules follow the market table of the panel's market (the values above are Taiwan's; other markets use their own).
 - They can be overridden through `config` of `stock_backtest`: `fee_bp_x100` (in 0.01 basis points, default 1425), `tax_sell_bp_x100` (default 3000), `tax_sell_etf_bp_x100` (default 1000); `cost_bp` >= 0 = the legacy model, N basis points per side and no separate tax.
@@ -1384,10 +1457,31 @@ Numbers in `exit_when` / `keep_when` and in the intraday levels `exit_below` / `
 | the volatility multiple and the longest holding, tried together | `{"exit_when":"pos.ret < -$k * ROLL_STD(20, RET(1, close)) \|\| pos.days >= $n","grid":{"k":[1.5,2,3],"n":[20,40]}}` | 6 |
 
 - Values are given as an array `[0.05, 0.08, 0.1]` or as `{"from": 0.04, "to": 0.1, "step": 0.02}`. The same `$name` may appear several times.
-- Limits: 4 names, 1..16 values each, at most 64 sets in all.
+- Limit: base-grid settings x threshold sets <= 32,767 (cells of the trial ledger); beyond that an error, use fewer values or split the search.
 - A value must not change how many days the condition looks back: window lengths such as an average's days are not accepted and are searched separately.
 - Every set runs. Per formula and portfolio setting the sets are compared by `grid_by` (default `apx.SHARPE`) and one is kept; the set it used is in `program.exit_when` of the report, and the numbers of every set are in `exit_grid` of the job summary.
 - Every set is one trial in the multiple-testing count (10.3).
+- To search near the original value just wrap the threshold: `{"exit_when":"pos.ret <= -apx.EVOLVE(0.08)"}` = `{"exit_when":"pos.ret <= -$evolve1","grid":{"evolve1":[0.04,0.06,0.07,0.08,0.09,0.1,0.12,0.16]}}` (the original x 1/2 ... 2, as in 10.1); integers such as `apx.PICK(apx.EVOLVE(10), false)`, `apx.EVERY(apx.EVOLVE(21))` use the day grid. Only a single number may be wrapped; wrapping an operator parameter (how many days it looks at, e.g. `ROLL_MEAN(apx.EVOLVE(20), close)`) returns `E_EVOLVE_WINDOW`, whose fix is the `$name` + `grid` form.
+
+### 9.11a The search's base grid: `pl`, `reb`, `n`, `wk`
+
+In a search every tree tries a "base grid": long threshold x rebalance days x positions (x weight key). Not written: thresholds 160 / 170 / 180 / 190, rebalance 5 / 21 days, 20 / 50 positions (16 settings). Each axis is a `$name` in the portfolio formulas with its values in the same `grid`; giving only `grid` works too.
+
+| Plain words | `portfolio` | Base grid |
+|---|---|---|
+| try rebalancing every 5, 10 and 21 days | `{"grid":{"reb":[5,10,21]}}` | 4 x 3 x 2 = 24 |
+| buy only the top 10% (threshold 180) | `{"hold":"apx.IN_TOP(180)"}` | 1 x 2 x 2 = 4 |
+| try top 25% down to top 2.5% | `{"hold":"apx.IN_TOP($pl)","grid":{"pl":[150,160,170,180,190,195]}}` | 6 x 2 x 2 = 24 |
+| hold 10, 20 or 30 stocks | `{"weight":"apx.SHARE(apx.PICK($n, false), 1)","grid":{"n":[10,20,30]}}` | 4 x 2 x 3 = 24 |
+| try equal and inverse-volatility weights | `{"weight":"apx.SHARE(apx.PICK(20, false), $wk == 0 ? 1 : apx.INV_VOL_KEY())","grid":{"wk":[0,1]}}` | 4 x 2 x 1 x 2 = 16 |
+| rank weights with the threshold tried along | `{"hold":"apx.IN_TOP($pl)","weight":"apx.SHARE(apx.PICK(20, false), apx.RANK_KEY($pl))","grid":{"pl":[170,190]}}` | 2 x 2 x 1 = 4 |
+
+- The four places: `apx.IN_TOP($pl)` in `hold`, `apx.EVERY($reb)` in `rebalance_when`, the count of `apx.PICK($n, ...)`, the weight key `$wk == 0 ? 1 : apx.INV_VOL_KEY()`. Any name works; with only `grid` use `pl`, `reb`, `n`, `wk`.
+- One value = writing that number (`{"grid":{"reb":[10]}}` and `{"rebalance_days":10}` are the same thing and the same result library).
+- These `$name`s go only in those places; numbers to try elsewhere (exits...) take their own names. When an axis already has a fixed value (e.g. `rebalance_days`), do not give that axis in `grid` too.
+- `apx.RANK_KEY(p)` (rank weight key, = `FLOOR(CS_PCT(apx.SCORE()) * 200) - p + 1`) uses the same p as `apx.IN_TOP(p)`; no argument = follow the long threshold.
+- `apx.IN_TOP` and `apx.RANK_KEY` read the strategy's own score and go only in `portfolio`; in a score formula use `CS_PCT(x)` for a percentile rank.
+- Every base-grid setting is one trial in the multiple-testing count (10.3); plan's `effective.portfolio` lists each axis's values (`rebalance_days`, `max_positions`, `in_top`).
 
 ### 9.12 Backtest rules as formulas: `weight` + `rebalance_when`
 
@@ -1406,12 +1500,14 @@ Every argument above is shorthand for two formulas. You can write the formulas d
 | `max_weight=15` | `apx.CAP(0.15, apx.SHARE(...))` |
 | `keep_when="pos.rank <= 30"` | `apx.PICK(10, FILL(pos.rank <= 30, false))` |
 | `max_new=3` | `apx.PICK(10, false, 3)` |
+| `config.max_turnover_bp=3000` (turnover cap) | `apx.PICK(10, false, 0, 0.3)` (fourth argument: new names per rebalance <= floor(0.3 x the names held now); third argument `0` = no limit on new names) |
 | `exposure="..."` | times `(...)` (the market-wide formula in parentheses) |
 | `gross_max=0.8`, `cash_min=0.1` | times `0.8`, times `(1 - 0.1)` |
-| `gross_max=1.5` (margin) | times `MIN2(1, 1.5 / acct.gross_req)` (`acct.gross_req` = the sum of target weights at a rebalance; `margin_rate` still given) |
+| `gross_max=1.5` (margin) | times `MIN2(1, 1.5 / acct.gross_req)` (`acct.gross_req` = the sum of target weights at a rebalance; `margin_rate` still given); with an add term, wrap the add in `MIN2(..., acct.room)` = adds beyond the cap use only the room left (`add_mode="cash"`, the default) |
+| `add_mode="scale"` | times `MIN2(1, g / acct.gross_req)` (`1` without margin), add term not wrapped in `acct.room` = beyond the cap shrink all holdings in proportion |
 | `exit_when="cond"` | times `!(pos.held && FILL(cond, false))` |
 | `exit_below`, `exit_above` | times `!(pos.held && FILL(TOUCH_BELOW(pos.entry * 0.92) \|\| TOUCH_ABOVE(pos.entry * 1.2), false))` |
-| `add_when="A"`, `size_init=0.5` | times `FILL(pos.size + 1 * (A && !FILL(LAG(1, A), false) && !apx.EVERY(21)), 0.5)` (`!apx.EVERY(21)`: on rebalance days the trigger is recorded, not traded; wrapping in `MIN2(cap, ...)` = `max_size`) |
+| `add_when="A"`, `size_init=0.5` | times `FILL(pos.size + 1 * (A && !FILL(LAG(1, A), false) && !apx.EVERY(21)), 0.5)` (`!apx.EVERY(21)`: on rebalance days the trigger is recorded, not traded; wrapping in `MIN2(cap, ...)` = `max_size`; with margin the add term is `MIN2(1 * (...), acct.room)`) |
 | `cut_when="C"` | times `FILL(pos.size * (1 - 0.5 * (C && !FILL(LAG(1, C), false) && !apx.EVERY(21))), 1)` |
 | `weight` reading `pos.*` (target form) | times `FILL(pos.peak_ret >= 0.1 ? 2 : 1, 1)` |
 | `rebalance_days=21` | `rebalance_when="apx.EVERY(21)"` |
@@ -1428,8 +1524,9 @@ Example: sell half at +20%, the rest on a 10% fall from the high, monthly rebala
 ```
 
 - **Stocks not held**: `pos.held` = 0 and every other `pos.*` has no value (nor does `pos.exit_days` for a stock never exited). Wrap every factor that reads `pos.*` in `FILL`, or no new stock is ever bought: plan answers `E_NEVER_ENTER` with `fix` = the whole formula corrected, to paste as is. The three common ones: `(pos.ret > 0 ? 2 : 1)` -> `FILL((pos.ret > 0 ? 2 : 1), 1)`; `!(pos.held && pos.ret <= -0.08)` -> `!(pos.held && FILL(pos.ret <= -0.08, false))`; `!(pos.exit_days <= 20)` -> `!FILL(pos.exit_days <= 20, false)`.
-- The same thing written twice (e.g. `max_positions` and `apx.PICK`, `rebalance_days` and `apx.EVERY`) -> `APX_CONFLICT`; keep one. With a `weight` formula, `max_positions`, `weighting`, `max_weight`, `exposure`, `gross_max`, `cash_min`, `keep_when`, `exit_when`, `exit_below`, `exit_above`, `max_new`, the sizing arguments and `hold_days` go inside the formula.
-- Environment facts stay arguments: `initial_capital`, `contribution`, `contribution_every`, `lot`, `min_fee`, `lock`, `cash_rate`, `margin_rate`, `add_mode`, `grid`, `grid_by`.
+- The same thing written twice (e.g. `max_positions` and `apx.PICK`, `rebalance_days` and `apx.EVERY`) -> `APX_CONFLICT`; keep one. With a `weight` formula, `max_positions`, `weighting`, `max_weight`, `exposure`, `gross_max`, `cash_min`, `keep_when`, `exit_when`, `exit_below`, `exit_above`, `max_new`, the sizing arguments, `add_mode` and `hold_days` go inside the formula; the turnover cap is the fourth argument of `apx.PICK`, so drop `config.max_turnover_bp`.
+- `acct.room`: the remaining gross room this name gets for today's add (in multiples, the unit of `pos.size`) = the gross cap minus the gross before today's adds, split over today's adds in proportion to what each asks for, divided by this name's target weight; it uses only data up to today's close.
+- Environment facts stay arguments: `initial_capital`, `contribution`, `contribution_every`, `lot`, `min_fee`, `lock`, `cash_rate`, `margin_rate`, `grid`, `grid_by`.
 - This edition accepts the shapes in the table; other forms (e.g. a weight reading `GSUM(...pos.*...)`, two multipliers reading `pos.*`) answer `APX_UNSUPPORTED`, naming the missing piece.
 
 ---
@@ -1448,6 +1545,13 @@ Example: sell half at +20%, the rest on a 10% fall from the high, monthly rebala
 - `formulas`: each one is validated at plan time; one that does not compile, has a non-numeric root, or needs too long a warm-up is reported at plan time with its text.
 - **Letting the system try numbers in a formula**: write the number as `$name` and give its values in `grid` (the same `grid` as the `$name`s of portfolio rules, 9.11). Example "try a 6-month and a 1-year momentum lookback, both skipping the last month": `formulas=["RET_SKIP($n, 21, close)"]`, `portfolio={"grid":{"n":[126,252]}}` -> two trees `RET_SKIP(126, 21, close)` and `RET_SKIP(252, 21, close)`, the same trees as writing those two directly (same identity, same results). No user function to install; `nouns` (user function + `bind` + `grid`) is the older way of saying the same thing, still accepted and expanded to the same trees.
 - **One `grid`, routed by position**: a name in a score formula gives one tree per value; a name in `hold` / `exposure` / `weight` / `exit_when` / `keep_when` / `exit_below` / `exit_above` / sizing gives variants of the same tree (9.11). Example "try momentum over 60 and 120 days and a stop at 8% and 10%": `formulas=["RET($n, close)"]`, `portfolio={"exit_when":"pos.ret <= -$stop","grid":{"n":[60,120],"stop":[0.08,0.1]}}` -> two trees, two variants each. A name may not be written on both sides (`E_GRID_SHARED`: use a name per side). Names in formulas: up to 256 values each and 20,000 trees after expansion (as `nouns`); window lengths are accepted (each value is another tree with its own warm-up). Plan's `effective.formula_grid` lists the names, how many formulas were written and how many they expanded to; the first name of `grid` is the outermost loop.
+- **Letting the system search near the original: `apx.EVOLVE(...)`** (strategy optimization): wrap the one number or column the system may change; the system takes candidates near the original, one tree per candidate. Removing `apx.EVOLVE` gives the starting strategy (the same identity).
+  - A wrapped operator parameter: two grid points on each side of the original on that parameter's grid. Example `RET(apx.EVOLVE(60), close)` -> five trees 20, 40, 60, 120, 252, the same trees and the same result as `RET($n, close)` + `grid {"n":[20,40,60,120,252]}`. A packed parameter changes only the wrapped part (`RET_SKIP(252, apx.EVOLVE(21), close)` tunes 21 only).
+  - A wrapped constant: the original x 1/2, 3/4, 7/8, 9/8, 5/4, 3/2, 2 (constants in days or counts use the day grid). A BOOL constant and 0 have no neighbours.
+  - A wrapped column: every panel column of the same unit and kind (per-share / total, frequency, alignment). Example `CS_PCT(RET(20, apx.EVOLVE(close)))`.
+  - A candidate is listed only if the whole formula compiles, has a numeric root and fits the warm-up; none -> `E_EVOLVE_EMPTY` (fix: wrap one level out). `EVOLVE(...)` also works; exactly one argument (`E_EVOLVE_ARGS`).
+  - Several positions may be wrapped (their candidates multiply, the first in the text is the outermost loop); `$name` may be used together (it is substituted first). Plan's `effective.formula_grid.evolve` lists the values taken for each position (`kind`: `param` / `const` / `leaf`).
+  - Wrapping a whole expression (e.g. `apx.EVOLVE(CS_PCT(fund.roe))`) returns `APX_UNSUPPORTED`; not accepted in the stock pool (`APX_UNSUPPORTED`: try pool thresholds with `$name` + `grid` separately). Thresholds in portfolio rules: 9.11.
 - The same tree (equal after expansion) counts once.
 
 Every tree additionally tries a set of portfolio settings (a base grid of 16: rebalance every 5 / 21 days, at most 20 / 50 positions), and `screen_pick` keeps one. When `rebalance_days` or `max_positions` is given, that axis is fixed to the given value.
@@ -1507,12 +1611,15 @@ The same operators and precedence (plus `%`); values are real numbers (double). 
 
 | Group | Names |
 |---|---|
-| Scores | `cs_bp` (cross-section score), `ts_bp` (time score), `novel_bp` (novelty), `short_bp` (shortness), `total_bp` (combined score), `n_nodes` (nodes of the tree) |
-| Strategy summary | `net_ret_1e6` (net return over the period), `max_dd_1e6` (maximum drawdown), `n_rebalances`, `avg_positions_x100`, `breadth_min` (fewest selectable stocks) |
+| Scores | `cs_bp` (cross-section score), `ts_bp` (time score), `novel_bp` (novelty), `short_bp` (shortness), `total_bp` (combined score = `apx.TOTAL`), `n_nodes` (nodes of the tree) |
+| Strategy summary | `net_ret_1e6` (net return over the period), `max_dd_1e6` (maximum drawdown), `n_rebalances`, `avg_positions_x100`, `breadth_min` (fewest selectable stocks: the minimum over rebalance days; days with no valid rank are not counted) |
 | Portfolio arguments | `reb_days`, `p_long`, `p_short`, `max_positions`, `cost_bp`, `weight_mode` |
 | Panel | `n_days`, `day_first`, `day_mid`, `n_symbols` |
 | Factor metrics | `ic_x1e4` (mean rank IC), `ic_t_x100` (IC t-value), `ic_pos_x1e4`, `ic_days`, `spread_1e6` (annualised top 10% - bottom 10% spread), `spread_days`, `quint_1e6_1`...`quint_1e6_5` (annualised quintile returns), `quint_days`, `quint_rho_x1e4`, `quint_mono_x1e4`, `turnover_bp_avg`, `turnover_days`, `breadth_med`, `breadth_days`, `ic_decay_x1e4_1` / `_5` / `_21` / `_63`, `ic_decay_days_1` / `_5` / `_21` / `_63`, `ic_half_life_days`, `ic_h1_x1e4`, `ic_h2_x1e4` |
 | Exposure | `size_rho` (rank correlation between ranking and market cap), `ind_hhi`, `ind_top`, `n_ind`, `adv_med`, `adv_min` |
+| Risk (needs a risk model) | `alpha_share_bp` (share of return variance from stock-picking alpha, can be negative), `breadth_eff_x100` (annual effective breadth × 100) |
+| Multiple testing (needs `multitest`) | `mt_dsr` (Deflated Sharpe, 0..1), `mt_ic_padj` (Šidák-adjusted IC p-value, 0..1) |
+| Round | `round_pbo` (this round's PBO, 0..1; `screen_gate` only) |
 
 The tail of a name states the scale: `_bp` = ten-thousandths, `_1e6` = millionths, `_x100`, `_x1e4`.
 
@@ -1520,11 +1627,12 @@ The tail of a name states the scale: `_bp` = ten-thousandths, `_1e6` = millionth
 
 | Kind | Functions |
 |---|---|
-| Element-wise | `ABS` `SQRT` `LOG` `EXP` `POW(x, y)` `MIN2(x, y)` `MAX2(x, y)` `WHERE(cond, a, b)` `HAS(x)` |
+| Element-wise | `ABS` `SQRT` `LOG` `EXP` `FLOOR` (round down toward minus infinity) `POW(x, y)` `MIN2(x, y)` `MAX2(x, y)` `WHERE(cond, a, b)` `HAS(x)` |
 | Reductions (series -> scalar) | `SUM` `MEAN` `SD` `VAR` (sample, n - 1) `COUNT` (number of elements) `FIRST` `LAST` `MIN(x)` `MAX(x)` (missing values skipped; `AMIN` / `AMAX` are the same) `QUANTILE(x, q)` `STREAK(x)` (longest run of true) `LEN` |
 | Series -> series | `CUM` `PEAK` `DRAWDOWN` (fall of additive equity) `NAV` (compounded net value) `DRAWDOWN_NAV` (compounded fall) `DIFF` `FILTER(x, cond)` |
 | Windows (parameter first) | `ROLL_SUM(n, x)` `ROLL_MEAN(n, x)` `ROLL_STD(n, x)` `ROLL_MIN(n, x)` `ROLL_MAX(n, x)` (complete windows only, length N - n + 1), `SKIP(k, x)` (drop the first k cells), `LAG(k, x)` (shift back k cells, the first k missing, same length) |
 | Grouping | `BY_SUM(key, x)` `BY_MEAN` `BY_SD` `BY_MIN` `BY_MAX` `BY_COUNT` `BY_PROD1` (compounded) `BY_KEY(key)` |
+| Days | `RANK_DESC(x)` (rank of each day, largest first, from 1; ties go to the earlier day; missing values take no rank), `BOOT(seed, block)` (block bootstrap counts: the days are cut into blocks of `block` days, ceil(days / block) blocks are drawn with replacement, each day's value is how often its block was drawn; day order kept. Seeded by seed, the round's `val_alt_seed` and the panel: a recomputation gives the same bits) |
 | Constant | `nan` |
 
 - Function names are case-insensitive; the old lower-case input-first forms (`roll_mean(r, 63)`) still work, with an integer constant accepted on either side. The old `lag(x, k)` is `SKIP(k, x)`.
@@ -1618,6 +1726,7 @@ Official definitions written with the atoms above. User metrics are written the 
 | `apx.YEARS_BEAT_B` | `MEAN(BY_PROD1(year, r) > BY_PROD1(year, b))` | share of calendar years beating the market benchmark |
 | `apx.ROLL_SHARPE_MIN` | `MIN(ROLL_MEAN(252, r) / ROLL_STD(252, r)) * SQRT(252)` | minimum rolling one-year annualised Sharpe |
 | `apx.ROLL_RET_MIN` | `MIN(EXP(ROLL_SUM(252, LOG(1 + r)))) - 1` | minimum rolling one-year return (compounded): the worst one-year holding period |
+| `apx.TOTAL` | `FLOOR((3 * cs_bp + 2 * ts_bp + 3 * novel_bp + 2 * short_bp) / 10)` | combined score (bp): orders the settings when `grid_by` is not given; `total_bp` is its value |
 
 `m` (the pool's equal-weighted mean) and `b` (the market index) are two different yardsticks: `apx.IR`, `apx.BETA`, `apx.EXCESS_ANN` use `m`; the `*_B` metrics use `b`.
 
@@ -1644,6 +1753,9 @@ Screening has two expressions: the **threshold** (`screen_gate`, kept when true)
 **Old forms still work**: `screen_admit` (a threshold after the checks) = appended to `screen_gate`; `screen_pick` (the first setting of a formula that passes) as before. `check.*` cannot be used in `screen_pick` or `grid_by` (`E_CHECK_STAGE`).
 
 - The shorthand `screen=[{"metric": ..., "op": ">=", "value": ...}]` is a list of lower bounds.
+- Risk and multiple-testing atoms work in `screen_gate` as usual; in `screen_pick` the parts that read them are evaluated once they are computed (a failing setting moves on to the formula's next one). `round_pbo` only goes in `screen_gate`: that part is evaluated at the end of the round, and failing it moves every formula admitted that round out of the library (e.g. `screen_gate="round_pbo <= 0.5"`).
+- Old config keys are shorthands for these expressions: `w_cs`/`w_ts`/`w_novel`/`w_short` = other coefficients for `apx.TOTAL`; `min_alpha_share`, `min_breadth_eff` = the risk part of `screen_pick`; `mt_gate=block` = `screen_pick` plus `mt_dsr >= min_dsr_bp/10000 && mt_ic_padj <= max_ic_padj_bp/10000`; `pbo_block=1` = `screen_gate` plus `round_pbo * 10000 <= max_pbo_bp`.
+- The report job (`submit_report`) picks its strategies with the same two expressions: `screen_gate` = which admitted strategies get a report, `grid_by` = the ordering (larger first, those without a number last, ties in library order; default `ic_t_x100`), then the first `top` (0 = all). Values come from each strategy's screening atoms and `apx.*` in `validation.json`; `check.*` is not available. The old key `min_ic_t=X` is shorthand for `screen_gate="ic_t_x100 / 100 >= X"` (use one or the other). Example: `{"library":"L1","top":3,"screen_gate":"ic_t_x100 >= 300 && max_dd_1e6 <= 250000","grid_by":"apx.SHARPE"}`.
 
 ### 11.4 User metrics: `apx.metric.v1`
 
@@ -1678,8 +1790,17 @@ A check = re-running the strategy under a changed condition and seeing whether t
 | a run's `with`: `RETURNS(expression)` | replaces the value of the return; `ret` is the original return (for instance `RETURNS(SUB(ret, MKT_MEAN(ret)))`) |
 | a run's `with`: `PEER_SWAP()` | where a stock is selected, the return of the stock closest to it is used instead |
 | a run's `with`: `SHUFFLE()`, `SHUFFLE(k, group key)` | each day's returns shuffled across stocks (with a group key: only inside the same group) |
-| Intervals | `full`, `window.is`, `window.oos`, `window.seg` (cut by `windows`: `rolling`, `split`), `{"begin","end"}` |
-| Portfolio arguments | `cost_bp`, `p_long`, `p_short`, `rebalance_days`, `weight_mode`, `max_positions`, `max_weight_bp`, `max_turnover_bp` (expressions; `vary` expands several sets) |
+| a run's `with`: `SCORE(expression)` | replaces the score; `score` is the candidate's original score (for instance `SCORE(ROLL_MEAN(5, score))`); the new score is ranked inside this run's pool |
+| a run's `with`: `ENTRY_DELAY(n)`, `ENTRY_DELAY_ASOF(n)` | enter n days late (= `SCORE(LAG(n, score))`; `_ASOF` ranks with that earlier day's pool = `SCORE(LAG(n, CS_PCT(score)))`) |
+| a run's `with`: `REBALANCE_WHEN(condition)`, `PHASE(n, k)` | rebalance on the days the condition holds (same as `rebalance_when` in a backtest); `PHASE(n, k)` = `REBALANCE_WHEN(EVERY(n, k))`, every n days offset by k |
+| a run's `with`: `DAYS(weight)`, `DROP_TOP_DAYS(k)`, `DROP_BOTTOM_DAYS(k)`, `ONLY_DAYS(condition)`, `BOOTSTRAP(seed, block)` | which days count: positions unchanged, each day weighted when the metrics are collected (without the best / worst days, only some days, day bootstrap) |
+| a run's `with`: `DROP_TOP_HELD(run, k)`, `DROP_BOTTOM_HELD(run, k)`, `DROP_MOST_HELD(run, k)` | re-run without the k stocks that earned the most / lost the most / were held longest in an earlier run (= the pool condition `!CS_TOPK(k, HELD_RET(run))`...); pool conditions can also use `HELD_RET(run)` and `HELD_DAYS(run)` directly |
+| a run's `with`: `RETUNE(f)`, `RETUNE_AT(i, f)` | every day count of the formula (or only the i-th) times f/100, re-run: does it hold with slightly different lookbacks; `prog.n_windows` = how many day counts there are |
+| a run's `with`: `SCORE_NOISE(k, amp_bp)` | add noise to the rank before picking (= `SCORE(ADD(CS_PCT(score), MUL(amp_bp / 10000, NOISE(k))))`) |
+| a run's `with`: `user.<author>.NAME(args...)` | a transform you saved (11.6, "Your own transforms"); expands to the items it defines |
+| a run's `with`: `COST(...)`, `HOLD(hold && apx.IN_TOP(p))`, `WEIGHT(...)` | replace the backtest's one-way cost, long threshold, weights (names held, weight key, cap per stock, turnover cap); `cost`, `hold`, `weight` are the originals |
+| a run's `with`: `PERIOD(start, end)`, `ROLLING_OOS(is, oos, k)`, `ROLLING_IS(is, oos, k)`, `SPLIT(n, k)` | re-run the whole strategy on one date range only; `k` = `win` runs once per window (walk-forward, segments) |
+| old keys `interval`, `windows`, `cost_bp`, `p_long`, `p_short`, `rebalance_days`, `weight_mode`, `max_positions`, `max_weight_bp`, `max_turnover_bp` | still accepted, the same as the two rows above (`p_short` waits for the short-selling rules) |
 
 **Built-in checks** (all are definition files; read the full text with `stock_formula_help topic=check name=...`):
 
@@ -1714,8 +1835,7 @@ The 8 built-in checks are definitions of this very kind (`stock_formula_help top
 ```json
 {"schema": "apx.check.v1", "name": "user.local.HALVES", "version": 1,
  "description": "前後兩半 IC 同號",
- "windows": {"kind": "split", "n": 2},
- "runs": [{"id": "seg", "interval": "window.seg"}],
+ "runs": [{"id": "seg", "with": "SPLIT(2, win)"}],
  "outputs": {"seg_ic": "seg.ic_days > 0 ? seg.ic_x1e4 : 0", "lo": "AMIN(seg_ic)", "hi": "AMAX(seg_ic)"},
  "pass": "lo > 0 || hi < 0"}
 ```
@@ -1723,7 +1843,6 @@ The 8 built-in checks are definitions of this very kind (`stock_formula_help top
 | Field | Meaning |
 |---|---|
 | `runs` | the re-runs and what each one changes (not written = the original); at most 8 |
-| `windows` | how the interval is cut (`rolling`, `split`); at most 32 segments |
 | `outputs` | integers computed from the metrics of the runs; at most 16. These are the "screening metrics after the check", read in the threshold `screen_gate` as `check.<NAME>.<output>` |
 | `pass` | a condition over `outputs` (and `$params`, `env.*`) |
 | `params` | parameters: `{"name","default","min","max"}`, written `$name` in expressions |
@@ -1732,13 +1851,9 @@ The 8 built-in checks are definitions of this very kind (`stock_formula_help top
 
 | Key | Value | Meaning |
 |---|---|---|
-| `with` | a comma-separated list of transforms, one transform per item (table below) | the stock pool and the returns are both changed here; not written = original |
-| `interval` | `full` (default) | the whole period |
-| | `window.is`, `window.oos` | the in-sample and out-of-sample parts of rolling windows (needs `windows.rolling`) |
-| | `window.seg` | each equal segment (needs `windows.split`) |
-| | `{"begin": "env.n_days - 252", "end": "env.n_days"}` | only some days (day indices, half-open; may use `env.first`, `env.n_days`) |
-| portfolio arguments | `cost_bp`, `p_long`, `p_short`, `rebalance_days`, `weight_mode`, `max_positions`, `max_weight_bp`, `max_turnover_bp` | the value is an expression; `prog.FIELD` is the original value, e.g. `"cost_bp": "prog.cost_bp * 3"` |
-| `vary` | `{"k": [1, 2, 3]}` or `{"k": {"from": 1, "to": "$mult"}}` | expands the re-run into several (one variable, 1..16 values); a variable named after a portfolio argument is applied directly |
+| `with` | a comma-separated list of transforms, one transform per item (table below) | the stock pool, returns, score, rebalance days, days, portfolio settings and date range are all changed here; not written = original |
+| `vary` | `{"k": [1, 2, 3]}` or `{"k": {"from": 1, "to": "$mult"}}` | expands the re-run into several (one variable, 1..16 values); `with` reads it as `RUN.k`. A variable named after an old portfolio key (`p_long`, `rebalance_days`...) is applied directly |
+| old keys | `interval` (`full`, `window.is`, `window.oos`, `window.seg`, `{"begin","end"}`), `cost_bp`, `p_long`, `p_short`, `rebalance_days`, `weight_mode`, `max_positions`, `max_weight_bp`, `max_turnover_bp`; the top-level `windows` | still accepted, aliases of the `with` forms: `window.is` / `window.oos` = `ROLLING_IS` / `ROLLING_OOS(is, oos, win)`, `window.seg` = `SPLIT(n, win)`, `{"begin","end"}` = `PERIOD(begin, end)`, `"cost_bp":"prog.cost_bp * 3"` = `COST(cost * 3)`, `"p_long":"170"` = `HOLD(hold && apx.IN_TOP(170))`... (the same definition) |
 
 Each item of `with` (commas inside parentheses do not separate items):
 
@@ -1749,13 +1864,45 @@ Each item of `with` (commas inside parentheses do not separate items):
 | `RANDOM_HALF()`, `RANDOM_HALF(k)` | the stock pool | a random half of the stocks (fixed across periods); k numbers the draw, a different k is a different half |
 | `RETURNS(expression)` | the returns | the expression must give a RATIO; `ret` is the original return. It is applied to the full-day, overnight and intraday return each; the intraday price path for touch exits stays as it was |
 | `PEER_SWAP()`, `PEER_SWAP(ruler)` | the returns | when a stock is picked, the whole bar of its closest peer on that day is used instead; ranks and holdings unchanged. Same as `REMAP(PEER_IDX())` |
+| `PEER_SWAP(lookback, every, step, rank, min_corr_bp, input[, group key])` | the returns | how peers are found, written out in full (`PEER_IDX` and `PEER_SIDE` take the same arguments): correlation of `input` over the `lookback` days before each period, one point every `step` days (`rank` 0 = return correlation, 1 = rank correlation; `ret` = daily return), re-paired every `every` days; a correlation below `min_corr_bp` is not a peer (`-10000` = no floor); no `group key` = search the whole market, with one = only among stocks with the same key on the first day of the period (`PARENT_ID(1)` same industry, `CORR_GROUP(...)` correlation clusters). The default ruler = `PEER_SWAP(252, 126, 1, 0, 3000, ret)` |
 | `SHUFFLE()`, `SHUFFLE(k)`, `SHUFFLE(k, group key)` | the returns | returns shuffled across stocks each day (cross-sectional signal gone, market and distribution unchanged). k numbers the draw; with a group key only stocks with the same key are shuffled among themselves. Same as `REMAP(SHUFFLE_IDX(...))` |
 | `REMAP(index expression)` | the returns | each cell takes the whole bar, on the same day, of the stock the expression points at. `PEER_IDX()` and `SHUFFLE_IDX()` give a stock index (an integer); cells where the expression is invalid keep their own. To change only some cells: `REMAP(MASK(condition, PEER_IDX()))` |
+| `SCORE(expression)` | the score | `score` is the candidate's original score (per day, per stock); the new score is ranked inside this run's pool and picked the same way. Same grammar as score formulas (upper case, fixed point). `SCORE(score)` = no change |
+| `ENTRY_DELAY(n)` | the score | enter n days late: the score from n days ago, ranked in today's pool. Same as `SCORE(LAG(n, score))` |
+| `ENTRY_DELAY_ASOF(n)` | the score | enter n days late with the ranks of that earlier day's pool. Same as `SCORE(LAG(n, CS_PCT(score)))` |
+| `REBALANCE_WHEN(condition)` | rebalance days | rebalance on the days the condition holds. The condition must be market-wide (month start, `EVERY(n, k)`, a market condition...); same rule and same numbers as `rebalance_when` in a backtest; exposure stays as it was |
+| `PHASE(n, k)` | rebalance days | every n days, offset by k. Same as `REBALANCE_WHEN(EVERY(n, k))` (`EVERY` counts from the panel's first day, 0-based) |
+| `DAYS(weight)` | the days | how many times each day counts: the weight is an 11.1 screening-language expression (lower case, real numbers) over **this re-run's own** daily series `r`, `m`, `year`, `month`, `regime`, `half`, `day`, `b`; 0 or missing = not counted, 1 = once, 2 = twice (truncated, at most 32); a BOOL is 0/1. Positions and holdings run as they are; only the collection changes |
+| `DROP_TOP_DAYS(k)` | the days | without this re-run's k best daily net returns (= `DAYS(rank_desc(r) > k)`) |
+| `DROP_BOTTOM_DAYS(k)` | the days | without the k worst days (= `DAYS(rank_desc(-r) > k)`) |
+| `ONLY_DAYS(condition)` | the days | only the days where the condition holds (= `DAYS(condition)`), e.g. `ONLY_DAYS(regime > 0)` for bull days |
+| `BOOTSTRAP(seed, block)` | the days | block bootstrap of the days (= `DAYS(boot(seed, block))`); `vary` the seed for several draws and fold them with `PCT` |
+| `DROP_TOP_HELD(run, k)` | the stock pool | re-run without the k stocks that earned the most in run: the pool changes, so ranks are recomputed and other stocks get bought. Same as `!CS_TOPK(k, HELD_RET(run))` |
+| `DROP_BOTTOM_HELD(run, k)` | the stock pool | re-run without the k stocks that lost the most in run. Same as `!CS_TOPK(k, NEG(HELD_RET(run)))` |
+| `DROP_MOST_HELD(run, k)` | the stock pool | re-run without the k stocks held longest in run. Same as `!CS_TOPK(k, HELD_DAYS(run))` |
+| `HELD_RET(run)`, `HELD_DAYS(run)` | values inside a pool condition | per stock in run: the sum of returns while held (every piece that run's backtest itself booked on the stock: full days while held, the overnight or intraday part on next-open trade days, the touch-exit part; RATIO) and the number of days held at the close (COUNT). One value per stock, the same every day, 0 if never held; not weighted |
+| `RETUNE(f)` | the score | the same formula with every day-count argument times f/100 (floored), ranked in this run's pool. Day-count arguments = the arguments marked N in chapter 4 (days, periods, the period count of `RWIN` / `EWIN` / `RWIN_PCT`) and the window W of the algorithmic operators; the new value is clamped to that operator's legal range (e.g. `ROLL_STD` 2..1,260, `EMA` 2..84, the N of `RET_SKIP` must exceed M) and the number of clamps goes to the check record's `clamped`. f 1..1000; `RETUNE(100)` = unchanged |
+| `RETUNE_AT(i, f)` | the score | only the i-th day-count argument (from 0, in the formula's text order; a sub-expression used several times counts once). `prog.n_windows` = how many day-count arguments the formula has |
+| `SCORE_NOISE(k, amp_bp)` | the score | add noise to the rank before picking, same as `SCORE(ADD(CS_PCT(score), MUL(amp_bp / 10000, NOISE(k))))`. The noise depends only on (this check's definition, the run id, k, the day, the stock): re-running the same check gives the same bits, a different k is another draw |
+| `COST(expr)` | cost | the one-way cost (bp) becomes the expression's value; `cost` is the original, e.g. `COST(cost * 3)`, `COST(cost * c.k)` |
+| `HOLD(hold && apx.IN_TOP(p))` | long threshold | buy only at percentile rank >= p/200 (180 = top 10%); `hold` is the original entry condition. p may be `RUN.var` or `WINNER(...)` |
+| `WEIGHT(expr)` | weights | `weight` is the original. Takes `apx.SHARE(apx.PICK(N, false[, 0[, turnover cap]]), key)`: N = names held (`prog.max_positions` keeps it), the turnover cap is a ratio (`0.3`); key `1` equal, `apx.RANK_KEY()` by rank, `apx.INV_VOL_KEY()` inverse volatility, `weight` as before; `apx.CAP(cap, ...)` caps each stock (a ratio, `0.1` = 10%). E.g. `WEIGHT(apx.SHARE(apx.PICK(10, false), 1))`, `WEIGHT(apx.CAP(0.1, weight))` |
+| `PERIOD(start, end)`, `PERIOD(start, end, windows)` | date range | the whole strategy re-run on day indices [start, end), positions start from cash at the start (not just the metrics of that range; for that write `ONLY_DAYS(day >= ...)`). May use `env.first` (first day after warm-up), `env.n_days`, `$param` and this run's `vary` variable; bounds that use `win` (window number, from 0) run once per window, the number of windows is the third argument (`n_windows`, at most 32) |
+| `ROLLING_OOS(is, oos, k[, mx])`, `ROLLING_IS(is, oos, k[, mx])` | date range | walk-forward out-of-sample / in-sample segments: cut every oos days back from the last day with is days in sample right before, the in-sample start >= warm-up, the earliest is k = 0, more than mx (default 32) keeps the latest. k = `win` runs once per window (`WINNER` reads the same window); `RUN.k` with `vary {"k":{"from":0,"to":"n_windows - 1"}}` expands by vary; a number runs that segment only. Number of windows = `ROLLING_N(is, oos[, mx])` |
+| `SPLIT(n, k[, mx])` | date range | segment k of [warm-up, last day) cut into n equal parts; k = `win` runs once per segment. Number of segments = `SPLIT_N(n[, mx])` |
+| `user.<author>.NAME(args...)`, `user.<author>.NAME@version(...)` | as defined | your own transform (below, "Your own transforms"): its `body` with the arguments substituted expands to those items; the same transform, and the same `content_hash`, as writing the expansion; no version = the latest |
 
 - One run may carry several stock-pool conditions and at most one return transform (two kinds: write two runs).
-- Expressions may use `$param` and this run's `vary` variable (`RUN.var`); they are replaced by their integer values first. The `vary` values must then be numbers or `$param`.
-- One round holds at most 2 different stock pools and 2 different return transforms (a transform used by several runs or checks counts once).
+- Score transforms may be stacked and apply in the order written (each one's `score` is the previous result); at most one rebalance-day transform per run. `score` is only allowed inside `SCORE(...)`.
+- Day transforms (the `DAYS` family) may be written several times; the weights multiply, and the same run may also change the pool or the returns. A run with a day transform reads only the fields that are recollected with the weights: `net_ret_1e6` (sum of weight x daily net return), `ic_x1e4`, `ic_t_x100`, `ic_pos_x1e4`, `ic_days` (the rebalance-day IC, weighted), `spread_1e6`, `spread_days`; the other fields (`max_dd_1e6` included) give `E_DAYS_FIELD` (read them from a run without a day transform; a weighted drawdown is the screening expression `MAX(DRAWDOWN(r * weight))`). All weights 1 (e.g. `DAYS(1)`, `DROP_TOP_DAYS(0)`) gives the original run's value in these fields.
+- The weight is in the lower-case screening language; a score formula in upper case (`DAYS(TOP_K(R, 5))`) or a per-strategy scalar (`ic_x1e4`) gives `E_CHECK_LANG`. A reserved function and its expansion are the same check identity.
+- Expressions may use `$param` and this run's `vary` variable (`RUN.var`); they are replaced by their integer values first. The `vary` values must then be numbers or `$param`; either end of a range may also use `prog.n_windows` (e.g. `{"from":0,"to":"prog.n_windows - 1"}`: the number of members follows each formula's number of day counts).
+- Re-tuning (`RETUNE`, `RETUNE_AT`) is a score transform that always applies first within a run (it changes the formula itself), then the `SCORE` family; writing it before or after is the same transform. When the formula has too few day counts (none, or `RETUNE_AT`'s i ≥ `prog.n_windows`) that formula fails this check and the record says `"error":"E_FORMULA_NO_WINDOW"`; a check that uses the `RETUNE` family also records `clamped`. A `vary` range up to `prog.n_windows` reserves 16 score transforms (the limit); to open it together with other score transforms keep it smaller, e.g. `"to":"MIN2(prog.n_windows, 4) - 1"`.
+- One round holds at most 2 different stock pools, 2 different return transforms, 16 different score transforms and 32 different rebalance-day transforms (a transform used by several runs or checks counts once; `ENTRY_DELAY(2)` and `SCORE(LAG(2, score))` are the same one).
+- Referring to an earlier run (`HELD_RET`, `HELD_DAYS`, `DROP_*_HELD`): the referred run has to finish first, so the run that refers to it moves to the next stage by itself (at most 4 stages); the referred run cannot have `vary` or windows and a run cannot refer to itself (`E_RUN_REF_SELF`). The pool is computed once per candidate, at most 16 different ones per round.
 - The old keys `universe` and `ret` and the old names (`universe.peer_a`, `universe.peer_b`, `universe.random_half`, `ret.peer_swap`, `ret.shuffle`) are still accepted; they mean the same as writing them in `with`.
+- Portfolio settings (`COST`, `HOLD`, `WEIGHT`) change each setting once per run, and the date range once per run (twice gives `E_WITH_TWICE`). `WEIGHT` and `HOLD` arguments are read like the backtest `weight` and `hold` (the same shape table): the `COST` expression, the `apx.PICK` count and the `apx.IN_TOP` threshold may be check expressions (`$param`, `RUN.var`, `prog.FIELD`, `WINNER(...)`); the cap per stock and the turnover cap are numbers.
+- The date ranges that use `win` in one check share one number of windows (in-sample and out-of-sample with the same is, oos; otherwise `E_WINDOWS`); `n_windows` is that number. `ROLLING_N` and `SPLIT_N` are counts (integers) for `vary`'s `to` or `PERIOD`'s third argument, not transforms.
 
 | In plain words | The run |
 |---|---|
@@ -1768,8 +1915,44 @@ Each item of `with` (commas inside parentheses do not separate items):
 | two different random halves, both with the IC sign of the original | `{"id":"h","vary":{"s":[1,2]},"with":"RANDOM_HALF(h.s)"}`; `pass` is `COUNT(SIGN(h.ic_x1e4) == SIGN(base.ic_x1e4)) == 2` |
 | large caps only, with the returns of the closest peers | `{"id":"bs","with":"CS_PCT(fund.mktcap) >= 0.7, PEER_SWAP()"}` |
 | peer swap with peers matched on volume changes | `{"id":"sw","with":"PEER_SWAP(DIFF(1, LOG(volume)))"}` |
+| enter 1 to 3 days late; still profitable at 3 days | `{"id":"late","vary":{"n":[1,2,3]},"with":"ENTRY_DELAY(late.n)"}`; `pass` is `LAST(late.net_ret_1e6) > 0` |
+| stable when rebalance days shift (monthly, offsets 0 to 15, at least 80% profitable) | `{"id":"ph","vary":{"k":{"from":0,"to":15}},"with":"PHASE(21, ph.k)"}`; `pass` is `COUNT(ph.net_ret_1e6 > 0) * 10 >= 16 * 8` |
+| still profitable when rebalancing on the first trading day of each month | `{"id":"mo","with":"REBALANCE_WHEN(MONTH_START())"}`; `pass` is `mo.net_ret_1e6 > 0` |
+| score smoothed over 5 days keeps the IC sign | `{"id":"sm","with":"SCORE(ROLL_MEAN(5, score))"}`; `pass` is `SIGN(sm.ic_x1e4) == SIGN(base.ic_x1e4)` |
+| large caps only and 2 days late, together | `{"id":"bl","with":"CS_PCT(fund.mktcap) >= 0.7, ENTRY_DELAY(2)"}` |
+| does it still earn without its best 5 days | `{"id":"nobest","with":"DROP_TOP_DAYS(5)"}`; `pass` is `nobest.net_ret_1e6 > 0` |
+| without the worst 5 days, how much more it earns | `{"id":"noworst","with":"DROP_BOTTOM_DAYS(5)"}`; output `"lift":"noworst.net_ret_1e6 - base.net_ret_1e6"` |
+| on bear days only, the IC must still be positive | `{"id":"bear","with":"ONLY_DAYS(regime < 0)"}`; `pass` is `bear.ic_days > 0 && bear.ic_x1e4 > 0` |
+| 16 day bootstraps, 95% of them profitable | `{"id":"bs","vary":{"s":{"from":1,"to":16}},"with":"BOOTSTRAP(bs.s, 21)"}`; output `"p05":"PCT(bs.net_ret_1e6, 500)"`, `pass` is `p05 > 0` |
+| still profitable without the 5 stocks that earned the most | `{"id":"base"},{"id":"cut","with":"DROP_TOP_HELD(base, 5)"}`; `pass` is `cut.net_ret_1e6 > 0` |
+| IC keeps its sign without the 3 stocks held longest | `{"id":"base"},{"id":"m","with":"DROP_MOST_HELD(base, 3)"}`; `pass` is `SIGN(m.ic_x1e4) == SIGN(base.ic_x1e4)` |
+| day counts times 0.9 and 1.1, each keeps 70% of the net return | `{"id":"base"},{"id":"j","vary":{"f":[90,110]},"with":"RETUNE(j.f)"}`; output `"worst":"base.net_ret_1e6 > 0 ? AMIN(KEEP_BP(j.net_ret_1e6, base.net_ret_1e6)) : 0"`, `pass` is `worst >= 7000` |
+| one day count at a time (times 0.9), each still earns | `{"id":"q","vary":{"i":{"from":0,"to":"prog.n_windows - 1"}},"with":"RETUNE_AT(q.i, 90)"}`; `pass` is `ALL(q.net_ret_1e6 > 0)` |
+| 8 draws of 5% score noise, at least 7 still earn | `{"id":"nz","vary":{"s":{"from":1,"to":8}},"with":"SCORE_NOISE(nz.s, 500)"}`; `pass` is `COUNT(nz.net_ret_1e6 > 0) >= 7` |
+| "large caps only and 2 days late, together" saved as your own transform, days late as an argument | `{"id":"bl","vary":{"n":[1,2,3]},"with":"user.local.BIG_LATE(bl.n)"}` (definition file below) |
 
-**Step 2: add `windows` to cut time.** `{"kind": "rolling", "is_days": 504, "oos_days": 126, "max": 32}`: from the last day backwards every `oos_days`, the in-sample part right before; `{"kind": "split", "n": 4}`: equal segments.
+**Your own transforms (`apx.noun.v1`, `out_unit` `TRANSFORM`) = your own reserved functions.** Save a set of transforms you use often under one name, in the same kind of definition file as the user functions of chapter 12; the official `ENTRY_DELAY`, `ENTRY_DELAY_ASOF`, `PHASE`, `DROP_TOP_DAYS`, `DROP_BOTTOM_DAYS`, `ONLY_DAYS`, `BOOTSTRAP`, `DROP_TOP_HELD`, `DROP_BOTTOM_HELD`, `DROP_MOST_HELD` and `SCORE_NOISE` are definitions of the same kind (e.g. the `body` of `ENTRY_DELAY` is `SCORE(LAG($n, score))`, that of `DROP_TOP_DAYS` is `DAYS(rank_desc(r) > $k)`), expanded the same way with the same `content_hash` rule:
+
+```json
+{"schema": "apx.noun.v1", "name": "user.local.BIG_LATE", "version": 1, "out_unit": "TRANSFORM",
+ "description": "large caps only, entering n days late",
+ "params": [{"name": "n", "default": 1}],
+ "body": "CS_PCT(fund.mktcap) >= 0.7, ENTRY_DELAY($n)"}
+```
+
+- `body` = one or more `with` items (comma-separated); parameters are written `$name` (only those declared in its own `params`); it may use other user transforms (at most 8 levels deep). No `inputs`.
+- Write it as a whole `with` item: `user.local.BIG_LATE(2)`; arguments follow the order of `params`, trailing ones may be left out (= default); this run's `vary` variable may be an argument (`user.local.BIG_LATE(bl.n)`, one transform per value). Pin a version with `user.local.BIG_LATE@1(2)`.
+- Validate and install it like a user function; when a backtest or search uses a check that calls it, the saved transforms are sent to the engine with it and do not count towards the 8 checks.
+- Error codes: `E_XFN` (not `TRANSFORM`, no `body`, has `inputs`, nested more than 8 levels), a wrong number of arguments returns `E_WITH_TYPE` (with the call form, as for the official reserved functions), `E_PARAM` (`body` uses an undeclared `$name`), a missing version returns `E_WITH_UNKNOWN`; every item of `body` is checked by the `with` rules (the error codes above), each with its position and a fix you can paste.
+
+**The identity of a check, and the check ledger.**
+
+- A check's identity = name@version + the `content_hash` of the normalised definition + parameter values + the ruler (only when it uses `PEER_SWAP()`, `PEER_SIDE()` or `PEER_IDX()` without a ruler) + the seed `val_alt_seed` + the name@version of every user transform it uses.
+- In the check record (the `checks` of each candidate in the library's `validation.json`), a user check, or one whose transforms take arguments, has three more fields after `name` and `version`: `id` (the identity, 16 hex digits), `uses` (the name@version of the user transforms used) and `seed`. The records of the 8 built-ins are byte-for-byte as before.
+- `env.n_checks_tried` = how many different checks this candidate has been through in this library before this search; `env.n_checks_pass` = how many of them it passed. The same identity run several times counts once, and passing once counts as passed; built-ins count by name@version; -1 when there is no library. No built-in check reads them.
+- The re-runs of a check are not trials and do not add to the multiple-testing trial count. To discount "try many checks on one strategy and keep it if one passes", write it into `pass` yourself (e.g. `tried <= 3 && ...`).
+
+**Step 2: to cut time, write the date range in `with`.** `ROLLING_IS(504, 126, win)`, `ROLLING_OOS(504, 126, win)`: from the last day backwards every 126 days, the 504-day in-sample part right before, one run per window; `SPLIT(4, win)`: 4 equal segments. The old form (top-level `windows` plus `interval`) is still accepted.
 
 **Step 3: compute outputs (`outputs`).** `RUN.FIELD` reads a metric of one re-run; field names as the scalar atoms of 11.1 (`net_ret_1e6`, `max_dd_1e6`, `ic_x1e4`, `ic_t_x100`, `ic_days`, `spread_1e6`, `quint_1e6_1`...`5`, `turnover_bp_avg`...). A re-run with windows or `vary` is a series of values and needs an aggregate to become one number; an output may only refer to outputs written before it; names must not clash with field names, run ids, parameter names, `env` or `prog`.
 
@@ -1784,17 +1967,20 @@ Check expressions are integers (i64): division by 0 = 0; comparisons and logic r
 | Values | numbers, `$param`, `env.NAME`, `prog.FIELD`, `RUN.FIELD` (a metric of one run; field names as the scalar atoms of 11.1), `RUN.VAR` (a variable of `vary`) |
 | Operators | `+ - * / %`, comparisons, `&& \|\| !`, `?:` |
 | Functions | `ABS(x)`, `MIN2(a, b)`, `MAX2(a, b)` (same names as score formulas), `SIGN(x)` (-1 / 0 / 1), `KEEP_BP(variant, original)` (variant / original, in ten-thousandths, e.g. `KEEP_BP(swap.net_ret_1e6, base.net_ret_1e6)`) |
-| Aggregates | `COUNT` `SUM` `ALL` `ANY` `AMIN` `AMAX` (the window dimension first, else the `vary` dimension), `FIRST` `LAST`, `NTH(expr, k)` (the k-th of `vary`, from 0), `WINNER(RUN, FIELD, VAR)` (the variable value of the member with the largest FIELD in that run; used in another run's portfolio argument = pick in-sample, use out-of-sample), `n_windows` |
+| Aggregates | `COUNT` `SUM` `ALL` `ANY` `AMIN` `AMAX` (the window dimension first, else the `vary` dimension), `FIRST` `LAST`, `NTH(expr, k)` (the k-th of `vary`, from 0), `PCT(expr, q_bp)` (percentile over `vary`, smallest first: the floor((n - 1) x q_bp / 10,000)-th, from 0; q_bp clamped to 0..10,000, e.g. `PCT(bs.net_ret_1e6, 500)` = the 5th percentile), `WINNER(RUN, FIELD, VAR)` (the variable value of the member with the largest FIELD in that run; used in another run's portfolio setting = pick in-sample, use out-of-sample, e.g. `HOLD(hold && apx.IN_TOP(WINNER(is, net_ret_1e6, p)))`), `n_windows` |
 | Old forms | lower-case names are accepted and identified by the upper-case form (same definition, same `content_hash`): `min(a, b)` = `MIN2(a, b)`, `min(x)` = `AMIN(x)`, `keep_bp(...)` = `KEEP_BP(...)`...; `MIN(a, b, c)` answers with the fix `MIN2(MIN2(a, b), c)` |
-| `env` | `n_days` (panel days), `first` (first day after warm-up), `n_symbols`, `peer_nn_corr_bp` (average peer correlation), `peer_fallback_bp`, `peer_paired_bp`, `mt_dsr_bp`, `mt_ic_padj_bp`, `mt_n_eff_x100`, `ic_t_x100`, `net_ret_1e6` |
+| `env` | `n_days` (panel days), `first` (first day after warm-up), `n_symbols`, `peer_nn_corr_bp` (average peer correlation), `peer_fallback_bp`, `peer_paired_bp`, `mt_dsr_bp`, `mt_ic_padj_bp`, `mt_n_eff_x100`, `ic_t_x100`, `net_ret_1e6`, `n_checks_tried`, `n_checks_pass` (the check ledger, above) |
 
 | Plain words | `runs` -> `outputs` -> `pass` |
 |---|---|
-| IC must also be positive over the last year | `[{"id":"late","interval":{"begin":"env.n_days - 252","end":"env.n_days"}}]` -> `{"late_ic":"late.ic_days > 0 ? late.ic_x1e4 : 0"}` -> `late_ic > 0` |
+| IC must also be positive over the last year | `[{"id":"late","with":"PERIOD(env.n_days - 252, env.n_days)"}]` -> `{"late_ic":"late.ic_days > 0 ? late.ic_x1e4 : 0"}` -> `late_ic > 0` |
 | profitable with both weekly and monthly rebalancing | `[{"id":"rb","vary":{"rebalance_days":[5,21]}}]` -> `{"worst":"AMIN(rb.net_ret_1e6)"}` -> `worst > 0` |
-| profitable on a random half of the stocks with costs tripled | `[{"id":"h","with":"RANDOM_HALF()","cost_bp":"prog.cost_bp * 3"}]` -> `{"r":"h.net_ret_1e6"}` -> `r > 0` |
-| profitable with only 10 holdings, max drawdown <= 40% | `[{"id":"n10","max_positions":"10"}]` -> `{"r":"n10.net_ret_1e6","dd_bp":"n10.max_dd_1e6 / 100"}` -> `r > 0 && dd_bp <= 4000` |
-| pick the long threshold in-sample, confirm out-of-sample, both windows profitable | `windows {"kind":"rolling","is_days":504,"oos_days":252,"max":2}`; `[{"id":"is","interval":"window.is","vary":{"p_long":[170,180,190]}},{"id":"oos","interval":"window.oos","p_long":"WINNER(is, net_ret_1e6, p_long)"}]` -> `{"oos_ret":"oos.net_ret_1e6","ok":"ALL(oos_ret > 0)"}` -> `n_windows >= 2 && ok == 1` |
+| profitable on a random half of the stocks with costs tripled | `[{"id":"h","with":"RANDOM_HALF(), COST(cost * 3)"}]` -> `{"r":"h.net_ret_1e6"}` -> `r > 0` |
+| at most 3 different checks tried on this strategy before, and IC positive over the last year too | `[{"id":"late","with":"PERIOD(env.n_days - 252, env.n_days)"}]` -> `{"tried":"env.n_checks_tried","late_ic":"late.ic_days > 0 ? late.ic_x1e4 : 0"}` -> `tried <= 3 && late_ic > 0` |
+| profitable with only 10 holdings, max drawdown <= 40% | `[{"id":"n10","with":"WEIGHT(apx.SHARE(apx.PICK(10, false), weight))"}]` -> `{"r":"n10.net_ret_1e6","dd_bp":"n10.max_dd_1e6 / 100"}` -> `r > 0 && dd_bp <= 4000` |
+| profitable with a 10% cap per stock and a 30% turnover cap | `[{"id":"cap","with":"WEIGHT(apx.CAP(0.1, apx.SHARE(apx.PICK(prog.max_positions, false, 0, 0.3), weight)))"}]` -> `{"r":"cap.net_ret_1e6"}` -> `r > 0` |
+| pick the long threshold in-sample, confirm out-of-sample, both windows profitable | `[{"id":"is","vary":{"p":[170,180,190]},"with":"ROLLING_IS(504, 252, win, 2), HOLD(hold && apx.IN_TOP(is.p))"},{"id":"oos","with":"ROLLING_OOS(504, 252, win, 2), HOLD(hold && apx.IN_TOP(WINNER(is, net_ret_1e6, p)))"}]` -> `{"oos_ret":"oos.net_ret_1e6","ok":"ALL(oos_ret > 0)"}` -> `n_windows >= 2 && ok == 1` |
+| 4 segments over the whole period, IC positive in each | `[{"id":"seg","with":"SPLIT(4, win)"}]` -> `{"ic":"seg.ic_days > 0 ? seg.ic_x1e4 : 0","ok":"ALL(ic > 0)"}` -> `n_windows == 4 && ok == 1` |
 
 ---
 
@@ -1893,14 +2079,14 @@ These are technical limits, not strategy rules.
 | Limit | Operators |
 |---|---|
 | 1,260 (5 years) | `LAG`, `DIFF`, `WSUM`, `ROLL_MEAN`, `ROLL_MAX`, `ROLL_MIN`, `ROLL_STD`, `ROLL_RANK`, `WRANK`, `COUNT`, `FIRST_IN_WINDOW`, `WDROP` |
-| 252 (1 year) | `RET`, `RET_SKIP`, `RVOL`, `PARK`, `GK`, `SKEW`, `KURT`, `ACORR`, `SLOPE`, `R2`, `MAXDD`, `DIST_HIGH`, `DIST_LOW`, `UP_STREAK`, `DOWN_STREAK`, `CORR`, `VOL_RATIO`, `AMIHUD`, `BETA`, `RESID_MOM`, `CS_REL_RET`, `WARG`, `WQUANT`, `WMAD`, `FN_YOY`, `FN_EGROW`, `FN_GM_CHG`, `FN_ACCRUAL`, `FN_DY`, `EV_EARN_DRIFT`, `EV_IDX_CHG` |
+| 252 (1 year) | `RET`, `RET_SKIP`, `RVOL`, `PARK`, `GK`, `SKEW`, `KURT`, `ACORR`, `WSKEW`, `WKURT`, `WACORR`, `SLOPE`, `R2`, `MAXDD`, `DIST_HIGH`, `DIST_LOW`, `UP_STREAK`, `DOWN_STREAK`, `CORR`, `VOL_RATIO`, `AMIHUD`, `BETA`, `RESID_MOM`, `CS_REL_RET`, `WARG`, `WQUANT`, `WMAD`, `FN_YOY`, `FN_EGROW`, `FN_GM_CHG`, `FN_ACCRUAL`, `FN_DY`, `EV_EARN_DRIFT`, `EV_IDX_CHG` |
 | 250 | `CS_RANK_CHG`, `CS_RANK_MEAN`, `EV_POST_N`, `EV_DAYS_SINCE` |
 | 84 | `EMA` (warm-up 3N-1) |
 | 756 | the warm-up steps K of `SMOOTH` |
 | 256 | the window W of algorithmic operators |
 | 12 | the periods k of `RWIN`, `RWIN_PCT` |
 | 20 | the periods k of `EWIN` |
-| 100 | the buckets of `CS_QCUT`, the k of `CS_WINZ`, the q of `WQUANT` |
+| 100 | the buckets of `CS_QCUT`, the k of `CS_WINZ`, the q of `WQUANT`, `GQUANT` |
 
 For two-parameter operators each parameter must fit 16 bits (the first 0..65,535, the second 0..32,767).
 
@@ -1929,11 +2115,10 @@ The warm-up of a formula (the warm-up of its nodes added along the tree) must be
 | points of `CORR_GROUP` / `CORR_SEED` (lookback / step) | 20..1,024 (quant 0: 20..500) |
 | seeds of `CORR_SEED` | 1..64 |
 | symbols listed one by one in a stock pool | 20 (over the whole condition) |
-| comparisons in `exit_when` / `keep_when` | 6 each; state-leaf coefficients within +-100 |
+| state-leaf coefficients in `exit_when` / `keep_when` | within +-100 |
 | terms in `exit_below` / `exit_above` | 1-3 each |
-| group cap `group_cap` | 1..255 names |
 | user-function grid x bindings | 20,000 combinations |
-| threshold grid `grid` | names in portfolio rules: 4, 1..16 values each, at most 64 sets; names in score formulas: 1..256 values each, at most 20,000 trees after expansion |
+| threshold grid `grid` | names in portfolio rules: base-grid settings x threshold sets <= 32,767; names in score formulas: 1..256 values each, at most 20,000 trees after expansion |
 | checks | 8 checks per strategy; per check 8 runs, 16 outputs, 32 segments, 16 `vary` sets |
 | `rounds` | 1..1,000 |
 | portfolio arguments | the ranges of section 9.2 |
@@ -1963,7 +2148,7 @@ Every error answer carries: the code, which formula, the character position, the
 | `APX_ARITY` | too few inputs, too many arguments, a missing parameter | parameters first, inputs after; for instance `ROLL_MEAN(20, close)` |
 | `APX_ARITY` | wrong argument count for the accepted forms `LE`, `AND`, `IF`, `MIN`, `MAX`, `GPCT` (2.5) | the message states how many and gives the form |
 | `APX_UNIT_MISMATCH` | a rank inside a group `GRANK` added to or compared with a ratio; a numeric column as the input of an event-days operator; `FILL(condition, 0:RATIO)` | the fix in the message: `GPCT(g, x)`, `EV_CHANGE(column)`, `0:BOOL` (2.7) |
-| `APX_UNSUPPORTED` | an atom with three or four inputs (`SELECT`, `REC2`, `STATESCAN`) | write `SELECT` as `c ? a : b`; build the others from two-input forms |
+| `APX_UNSUPPORTED` | `SELECT(...)` or the four-input `REC2` | write `SELECT` as `c ? a : b`; use `SMOOTH` or two-input forms instead of `REC2` |
 | `APX_ENGINE_LIMIT` | more than 128 nodes after expansion | the answer carries the node count; a reserved function marked R is one node and can replace a stretch of atoms |
 | `APX_CYCLE` | user functions refer to each other in a cycle, or nest deeper than 128 levels | break the reference |
 | `APX_FIELD` | a wrong field in a definition file (`name`, `version`, `schema`, `body`, `out_unit`) | `name` = `user.<author in lower case>.<NAME in upper case>`; `version` >= 1; `out_unit` is a unit name |
@@ -2001,8 +2186,7 @@ Frequent messages (the code is one of the above):
 | `E_NO_REBALANCE` | `rebalance_when` never holds over the period | check the condition |
 | `E_NO_WEIGHT` | `weight` is never positive over the period | only stocks with a weight > 0 are held |
 | `E_POS_RULE` | `pos.*` outside a comparison, not linear, or the other side neither a constant nor a market-only formula; `pos.rank` in `exit_when` | the shape rules of 9.5; for instance `pos.ret <= -0.08 \|\| pos.ret >= 0.2` |
-| `E_POS_ATOMS` | a rule with more than 6 comparisons | merge, or move part of it to the other rule |
-| `E_RANGE` | `reentry_days` outside 0..10,000; `group_cap` outside 1..255 | |
+| `E_RANGE` | `reentry_days` outside 0..10,000; `group_cap` not a positive integer | |
 | `E_POS_GROUP` | only one of `group_by`, `group_cap` given; `group_by` uses `pos.*` | give both, e.g. `{"group_by":"CORR_GROUP(RET(1, close))","group_cap":3}`; the group key reads only that day's data |
 | `E_POS_SIZE` | a sizing or account argument out of range or missing its partner (e.g. `size_init` without `add_when`, `gross_max` > 1 without `margin_rate`) | follow the ranges in 9.2 and the examples in 9.5b |
 | `APX_INVALID_ARGUMENT` | two of the three rebalance arguments given; both `weight` and `weighting` given | "held N days" is `exit_when="pos.days >= N"` |
@@ -2022,9 +2206,12 @@ Frequent messages (the code is one of the above):
 | `E_ARITY`, `E_ARGS` | the wrong number of arguments | |
 | `E_CYCLE` | definitions refer to each other in a cycle | |
 | `E_CHECK_STAGE` | `check.*` used in `screen_pick` / `grid_by`, or the threshold uses `check.*` with no check on | write it in the threshold `screen_gate` and turn that check on in `checks` |
+| `E_EVOLVE_ARGS` | `apx.EVOLVE` without exactly one argument | the response's `fix` is the whole corrected formula (two or more: one wrap each) |
+| `E_EVOLVE_EMPTY` | what `apx.EVOLVE` wraps has no neighbour (a BOOL constant, 0, no second column of the same kind, only this value fits the warm-up on the grid) | the response's `fix` wraps one level out |
+| `E_EVOLVE_WINDOW` | an operator parameter (days looked at) wrapped in a portfolio rule | the response's `fix` is the `$name` + `grid` form; or move that window into the score formula |
 | `E_RESERVED`, `E_NAMESPACE`, `E_NAME` | the name of a definition file is not acceptable | `user.<author>.NAME`; `apx.*` is reserved |
 | `E_DUP`, `E_HASH` | the same name and version with different content | `version` + 1 |
-| `APX_CHECK_*` | an error in a check definition (`E_EXPR`, `E_UNIT`, `E_PARAM`, `E_INTERVAL`, `E_WINDOWS`, `E_VARY`, `E_RESOURCE`, `E_CHECK_ATOM_PLACE` (a transform in the wrong place), `E_CHECK_LANG` (`with` written in the lowercase screen language), `E_RET_MIX`, `E_WITH_TYPE` (an item of `with` is not a condition; returns go inside `RETURNS(...)`), `E_WITH_TWICE` (one run changes the returns twice), `E_WITH_UNKNOWN` (no such transform; the closest name is given), `E_RET_UNIT` (the `RETURNS` expression is not a RATIO), `E_UNIVERSE_EMPTY` (the pool averages under 1 stock a day), `E_RES_LIMIT` (more than 2 pools or 2 return transforms in a round; the ones in use are listed), `E_OUTPUT`, `E_PASS`... with the prefix `APX_CHECK_`) | the answer carries the path (for instance `runs[1].interval`), the position and a suggestion |
+| `APX_CHECK_*` | an error in a check definition (`E_EXPR`, `E_UNIT`, `E_PARAM`, `E_INTERVAL`, `E_WINDOWS`, `E_VARY`, `E_RESOURCE`, `E_CHECK_ATOM_PLACE` (a transform in the wrong place), `E_CHECK_LANG` (`with` written in the lowercase screen language), `E_RET_MIX`, `E_WITH_TYPE` (an item of `with` is not a condition; returns go inside `RETURNS(...)`), `E_WITH_TWICE` (one run changes the returns twice), `E_WITH_UNKNOWN` (no such transform; the closest name is given), `E_RET_UNIT` (the `RETURNS` expression is not a RATIO), `E_UNIVERSE_EMPTY` (the pool averages under 1 stock a day), `E_RES_LIMIT` (more than 2 pools or 2 return transforms in a round; the ones in use are listed), `E_DAYS_FIELD` (a run with a day transform reads a field that depends on the positions), `E_OUTPUT`, `E_PASS`... with the prefix `APX_CHECK_`) | the answer carries the path (for instance `runs[1].interval`), the position and a suggestion |
 
 ---
 
