@@ -28,7 +28,7 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 | 搜尋 | 分數公式：`stock_backtest` 的 `formulas=[…]`、`trees_from`（自己給、自訂函數格點、系統隨機生成；第 10 章）、自訂函數的 body | i64 定點（第 3 章） | 每天每檔一個分數，越高排越前；一次試很多條 |
 | 回測 | `stock_backtest` 的 `portfolio={…}`（第 9 章） | i64 定點 | 怎麼從排名變成持股：換股時點、檔數、權重、出場 |
 | 篩選 | 門檻 `screen_gate`、排序 `grid_by`、`apx.metric.v1`（第 11 章） | 實數（double） | 一支策略留不留 |
-| 檢驗 | `checks`、`apx.check.v1`（第 11 章） | 整數（i64） | 換條件重跑後的指標與通過條件 |
+| 檢驗 | `checks`、`apx.check.v1`（第 11 章） | 整數或比值 | 換條件重跑後的指標與通過條件 |
 
 四件事共用同一份文法、同一套運算子與優先序。差別在值的型別與能用的名字：搜尋與回測用面板的欄與第 4 章的算子；篩選與檢驗用策略層的原子（`r`、`m`、`mean`、`sd`…）。選股範圍（第 8 章）是一條結果為 BOOL 的生成算式。
 
@@ -41,9 +41,25 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 | 自訂函數 | `user.<作者>.NAME` | 使用者，經 `my_stock_strategies_change action=install` 存檔 | `user.local.RSI` |
 
 - 保留函數的原子定義式列在第 5 章：每一個保留函數都拆得回原子，定義式與用名字寫逐位元相同。
-- 資料不是計算：由外部取得的資訊（每個市場各一套），也就是第 7 章的欄位（欄鍵 `LEAF` 就是欄位本身）、第 L 層歸屬的編號 `PARENT_ID(L)`（4.8 節），加上第 7.4 節由資料欄相除得到的 5 個財報比值（衍生資料，例 `FN_EP`）。
+- 資料不是計算：由外部取得的資訊（每個市場各一套），也就是第 7 章的欄位（欄鍵 `LEAF` 就是欄位本身）、第 L 層歸屬的編號 `PARENT_ID(L)`（4.8 節）、這一列是哪一天 `EPOCH_DAY()` 與面板第幾列 `DAY_INDEX()`（4.11 節：日期是資料，把日期拆成年月日星期的 `MONTH()` 這些是原子），加上第 7.4 節由資料欄相除得到的 5 個財報比值（衍生資料，例 `FN_EP`）。
 - 自訂函數展開到原子後跟直接寫原子是同一棵樹，結果相同。
-- 另有官方的類別名詞 `cls.NAME()`（第 8 章），只用在條件。
+- 另有官方的類別名詞 `cls.NAME()`（第 8 章），只用在條件；市場有產業代碼才有。
+
+### 1.4 一門語言、每個市場一套資料
+
+上線的市場：台股（`market=TW`）、美股（`market=US`）。算子、保留函數、自訂函數在每個市場意思都一樣；不一樣的只有**資料**——它是外部取得的，一個市場一套。所以只有一條規則：
+
+> 一條算式在市場 m 能用 ⇔ 它用到的每一片「葉子」，m 都有。
+
+| 葉子 | 會因市場不同 | 哪裡查 |
+|---|---|---|
+| 資料欄 | 台股有法人、融資券、月營收、漲跌停價，美股沒有 | 第 7 章；`stock_formula_help topic=column market=US` |
+| 代碼值 | `symbol`、`market`、`industry` 的值是各市場自己的（台股 `"2330"`、`TWO`；美股 `"AAPL"`、`XNAS`） | 第 2.4 節 |
+| 類別名詞 `cls.*` | 定義在那個市場的產業代碼上：市場有產業代碼才有 | 第 8.3 節；`stock_formula_help topic=universe` |
+| 第 1 層（產業）`PARENT_ID(1)` | 市場有產業代碼才有；沒有的市場 `GSUM(1, x)`、`CS_PEER_RANK(1, x)` 沒有群 | 第 4.8 節 |
+
+- 有通用名的先寫通用名：大盤寫 `mkt.idx`（價格指數）、`mkt.idx_tr`（報酬指數），台股解析成加權指數（`idx.taiex`、`idx.taiex_tr`），美股解析成 S&P 500（`idx.spx`、`idx.spx_tr`），讀的是同一欄、結果逐位元相同；面板沒有那一欄時編不過，錯誤列出各市場的欄名。
+- 交易所的規矩（手續費與稅、有沒有漲跌停、財報期限、幣別）不寫在算式裡：回測照每一檔所屬的市場自動套（第 7.3、9.7 節）。
 
 ---
 
@@ -84,7 +100,7 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 | `a <= b` | `NOT(GT(a, b))` | |
 | `a == b` | `NOT(OR(GT(a, b), LT(a, b)))` | 代碼欄的 `==` 見 2.4 |
 | `a != b` | `OR(GT(a, b), LT(a, b))` | |
-| `a && b` | `MUL(a, b)` | 兩邊都要是 BOOL |
+| `a && b` | `AND(a, b)` | 兩邊都要是 BOOL；兩個真假不能寫成相乘 `(a > b) * (c > d)`（編不過，改法 `a && b`）。舊版存下來的選股範圍、投組算式、自訂函數裡的兩個真假相乘（舊版把 `&&` 印成 `MUL`）讀存檔時照且讀回 |
 | `a \|\| b` | `OR(a, b)` | 兩邊都要是 BOOL |
 | `!a` | `NOT(a)` | a 要是 BOOL |
 | `-a` | `NEG(a)` | `-` 後面直接接數字是負常數 |
@@ -108,7 +124,7 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 
 注意兩點：
 
-- `&&`、`||` 沒有短路：任一邊無效，結果就無效（`OR` 也一樣）。
+- `&&`、`||` 遇到無效（不知道）的一邊：另一邊已經決定答案就給答案——`假 && 不知道 ＝ 假`、`真 || 不知道 ＝ 真`；答案會跟著那一邊變（`真 && 不知道`、`假 || 不知道`），結果就無效。`!` 無效還是無效。條件最後用的地方（選股範圍、`hold`、出場、`MASK`），無效一律當沒成立。
 - `?:` 的中段裡，`:` 後面接的是已知單位名才當單位後綴，否則是 `?:` 的冒號。`c ? 0.5:RATIO : 1:RATIO` 與 `c ? 0.5 : 1` 都對。
 
 ### 2.3 常數與單位
@@ -129,19 +145,22 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 
 ### 2.4 代碼欄、集合、字串
 
-`industry`、`market`、`common`、`symbol` 是 CODE 單位的代碼欄：只能 `==`、`!=`、`in {…}` 或當群鍵，不能做數學。
+`industry`、`market`、`common`、`symbol` 是 CODE 單位的代碼欄：只能 `==`、`!=`、`in {…}` 或當群鍵，不能做數學。一欄代碼＝一套分類（產業、交易所、是不是普通股、哪一檔）；每一套都能當條件、也能當群鍵，寫法相同。
 
 | 寫法 | 意思 |
 |---|---|
-| `market in {TW, TWO}` | 上市或上櫃（交易所名是常數） |
-| `symbol in {"2330", "2317"}` | 這兩檔（代號用雙引號） |
+| `market in {TW, TWO}` | 台股：上市或上櫃（交易所名是常數） |
+| `market == XNAS` | 美股：那斯達克。美股的交易所寫國際代碼：`XNAS` 那斯達克、`XNYS` 紐約證交所、`XASE` NYSE American、`ARCX` NYSE Arca、`BATS` Cboe BZX |
+| `symbol in {"2330", "2317"}` | 這兩檔（代號用雙引號；美股寫英文代號，例 `"AAPL"`） |
 | `symbol == "2330"` | 這一檔 |
-| `industry in {24, 28}` | 產業代碼（代碼表用 `stock_formula_help topic=universe` 查） |
+| `industry in {24, 28}` | 產業代碼：各市場自己的代碼表（用 `stock_formula_help topic=universe market=…` 查；例子是台股的代碼） |
 | `MONTH() in {3, 5, 8, 11}` | 數值欄也能用 `in`，值照 x 的單位讀 |
 
 - 條件（選股範圍、`hold`、`rebalance_when`、`exposure`）與分數公式、自訂函數都收。
 - 分數公式裡的 `x in {…}`、`symbol == "2330"` 是一欄 BOOL，在輪開始時算好接在面板後面，是結果庫身分的一部分。可當 `MASK`、`?:` 的條件或乘上去。
-- 分數公式裡的產業群寫 `PARENT_ID(1)`（群鍵），不是 `industry`。
+- 當群鍵時直接寫名字：`GSUM(industry, x)`、每個產業取前 3 檔 `GTOP(3, industry, x)`。`industry` 就是層級 1，`GSUM(industry, x)` 跟 `GSUM(1, x)` 是同一棵樹；條件與分數公式都一樣。`market`、`common`、`symbol` 也一樣直接寫：每個交易所各自加總 `GSUM(market, x)`、每個交易所取前 3 檔 `GTOP(3, market, x)`，條件與分數公式同一個答案；在分數公式裡它是接在面板後面的一欄代碼（一檔一個值、每天相同），屬於庫的身分。
+- 資料有那一欄才讀得到的分類：`sector`（大類）、`subindustry`（細產業）、`sectype`（股票種類）、`hq_country`（註冊地）。寫法同 `industry`：`sector == 代碼`、`sector in {…}`（右邊也可以寫代碼表裡的名稱）、當群鍵 `GSUM(sector, x)`、每個大類取前 3 檔 `GTOP(3, sector, x)`，條件與分數公式都一樣。這個市場有哪幾套、各自的代碼在 `stock_formula_help topic=universe`；沒有那一套資料的市場回「這個市場沒有這一套分類」。目前台股與美股的資料都還沒有這四欄。`country`（＝層級 3）現在寫了每一格都沒有值。
+- 代碼值是各市場自己的：寫了別的市場的代碼回 `E_UNKNOWN_CODE`。
 
 ### 2.5 別名
 
@@ -153,10 +172,11 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 | `apx.NAME` | `NAME`（保留函數的全名：`apx.RET`＝`RET`） |
 | `GSUM(k, x)`、`GCOUNT`、`GRANK`、`GMAX`、`GMIN`、`GSTD` 的第一個引數不是「沒帶單位的整數」時 | 群鍵版 `GSUM_BY(k, x)`…`GMIN_BY(k, x)`、`GSTD_BY(k, x)`（第 4.6 節） |
 | `ROLL_SUM(N, x)` | `WSUM(N, x)` |
+| `WMEAN`、`WSTD`、`ROLL_QUANT`、`ROLL_ARG`、`ROLL_MAD`、`ROLL_DROP`、`ROLL_REG`；`RWIN_SUM(k, x)` 等、`EWIN_SUM(k, b, x)` 等 | 照規律的名字（2.5a） |
 | `LE(a, b)`、`GE(a, b)`、`EQ(a, b)`、`NE(a, b)` | `a <= b`、`a >= b`、`a == b`、`a != b` |
 | `AND(a, b, …)` | `a && b && …` |
 | `IF(c, a, b)`、`IIF(c, a, b)`、`WHERE(c, a, b)` | `c ? a : b` |
-| `MIN(a, b, …)`、`MAX(a, b, …)` | `MIN2`／`MAX2` 連著套：逐格取小／取大。N 天裡的最小最大是 `ROLL_MIN(N, x)`／`ROLL_MAX(N, x)`，同一天全市場的是 `GMIN(0, x)`／`GMAX(0, x)` |
+| `MIN(a, b, …)`、`MAX(a, b, …)` | `MIN2`／`MAX2` 連著套：逐格取小／取大。兩個輸入裡一個是沒寫單位的 2～1,260 整數、另一個是序列（`MAX(20, close)`）時編不過，錯誤附兩種改法（`ROLL_MAX(20, close)`，或跟常數比 `MAX2(20:PRICE, close)`）。N 天裡的最小最大是 `ROLL_MIN(N, x)`／`ROLL_MAX(N, x)`，同一天全市場的是 `GMIN(0, x)`／`GMAX(0, x)` |
 | `GPCT(g, x)`、`apx.GPCT(g, x)` | 群內百分位（第 5.2 節） |
 
 條件（BOOL）放進視窗、或跟沒寫單位的 0／1 比，照下表展開成同一棵樹：
@@ -174,6 +194,35 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 - 恆真恆假的比法（`c >= 0`、`c > 0.5`）不收，回單位不合。
 - 這一節的寫法印出來都是正名（2.6）：`ROLL_SUM(20, x)` 印成 `WSUM(20, x)`。
 
+### 2.5a 範圍 × 算法：照規律的名字
+
+<!-- range-algo:begin -->
+
+「看一批格子、算出一個數」的函數＝範圍×算法。名字照規律：最近 N 天 `ROLL_…` 與 `W…` 兩種字頭互通，最近 k 次公布 `RWIN_…`（`RWIN_SUM(4, eps)`＝`RWIN(4, 1, eps)`）、最近 k 次事件 `EWIN_…`，同一群 `G…`。同一格用「＝」連起來的是同一棵樹，印出來是第一個名字。—＝現在要用別的寫法組。
+
+| 算法 | 最近 N 天 | 從條件上次成立以來 | 最近 k 次公布／事件 | 同一天同一群 |
+|---|---|---|---|---|
+| 加總 | `WSUM`＝`ROLL_SUM` | `SCANSUM` | `RWIN_SUM`、`EWIN_SUM` | `GSUM` |
+| 個數 | `COUNT` | — | — | `GCOUNT` |
+| 平均 | `ROLL_MEAN`＝`WMEAN` | `SCANMEAN` | `RWIN_MEAN`、`EWIN_MEAN` | `GMEAN`、`XL_PARENT` |
+| 加權平均 | — | — | — | `GWMEAN` |
+| 最大 | `ROLL_MAX`＝`WMAX` | `SCANMAX` | `RWIN_MAX`、`EWIN_MAX` | `GMAX` |
+| 最小 | `ROLL_MIN`＝`WMIN` | `SCANMIN` | `RWIN_MIN`、`EWIN_MIN` | `GMIN` |
+| 標準差 | `ROLL_STD`＝`WSTD` | `SCANSTD` | `RWIN_STD`、`EWIN_STD` | `GSTD` |
+| 今天排第幾 | `WRANK`、`ROLL_RANK` | — | `RWIN_RANK`、`EWIN_RANK` | `GRANK`、`ORD`、`GPCT` |
+| 分位數（中位數） | `WQUANT`＝`ROLL_QUANT` | — | `RWIN_QUANT`、`EWIN_QUANT` | `GQUANT` |
+| 取某一格 | `LAG` | `LATCH` | `RWIN_LAG`、`EWIN_LAG` | 不適用 |
+| 跟某一格的差 | `DIFF`、`RET` | — | `RWIN_DIFF`、`EWIN_DIFF`、`RWIN_PCT` | 不適用 |
+| 極值離今天多久 | `WARG`＝`ROLL_ARG` | — | — | 不適用 |
+| 兩條數字的關係 | `WREG`＝`ROLL_REG`、`CORR` | — | — | `GRESID` |
+| 偏態／峰度／自相關 | `WSKEW`、`WKURT`、`WACORR` | — | — | — |
+| 絕對離差和 | `WMAD`＝`ROLL_MAD` | — | — | — |
+| 最大跌幅 | `WDROP`＝`ROLL_DROP`、`MAXDD` | — | — | 不適用 |
+
+同規律、意思不同的幾對不互通：`ROLL_RANK`（0～1 比例）≠ `WRANK`（個數）；`SKEW` `KURT` `ACORR`（價取對數報酬後）≠ `WSKEW` `WKURT` `WACORR`（x 本身）；`COUNT`（N 天裡為真的天數）≠ `GCOUNT`（群裡有效的個數）。
+
+<!-- range-algo:end -->
+
 ### 2.6 印出來能讀回去
 
 列表、報告、搜尋紀錄印的算式是正規文字，原樣貼回 `formulas` 會編出同一棵樹：
@@ -185,7 +234,6 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 | 兩個參數拆開印 | `RET_SKIP(252, 21, close)` |
 | 集合 | `(MONTH() in {3, 5, 8, 11})` |
 | 群鍵版 | `GSUM_BY(PARENT_ID(1), volume)` |
-| 讀成整數元的金額欄 | `fund.mktcap:AMOUNT` |
 | 衍生欄（第 6 章）印成整個呼叫 | `CORR_GROUP(252, 126, 1, 3000, 1, RATIO(close, LAG(1, close)))` |
 
 ### 2.7 寫錯時的回應：錯在哪＋可照貼的改法
@@ -246,54 +294,61 @@ Valynox Quant Language（VQL）是 AlphaPrime Stocks 的策略語言。作者是
 - 某一步超出 i64、除以 0 → 那一格無效。
 - 一格有兩種狀態：有效（帶值）或無效。
 
-### 3.2 十一種單位
+### 3.2 十種單位
 
 | 單位 | 存法 | 意思 | 例 |
 |---|---|---|---|
-| `PRICE` | ×1e6 | 價格（元） | `close`、`raw.limit_up` |
-| `QTY` | ×1e6 | 數量（股） | `volume`、`shares`、`foreign_net` |
-| `MONEY` | ×1e6 | 金額（元）；上限約 9.22 兆元 | `revenue`、`eps`（每股值也是 MONEY） |
+| `PRICE` | ×1e6 | 元／股：價格與每股值 | `close`、`raw.limit_up`、`eps`、`dps` |
+| `QTY` | 整數（股） | 股數 | `volume`、`shares`、`foreign_net` |
+| `AMOUNT` | 整數（元） | 金額、公司總額 | `revenue`、`fund.mktcap`、`px.turnover` |
 | `RATIO` | ×1e6 | 比值、不帶單位的數 | `px.turnover_rate`、`RET(20, close)` |
 | `PCT` | ×1e6 | 百分點 | |
-| `INDEX` | ×1e6 | 指數點數 | `idx.taiex` |
+| `INDEX` | ×1e6 | 指數點數 | `mkt.idx` |
 | `DAYS` | 整數 | 交易日數 | `EV_DAYS_SINCE(…)`、`WARG(…)` |
 | `COUNT` | 整數 | 次數、個數、序號 | `MONTH()`、`COUNT(…)`、`GRANK(…)` |
 | `BOOL` | 整數 0／1 | 真假 | `close > open` |
 | `CODE` | 整數 | 代碼（只能比相等、`in`、當群鍵） | `industry`、`symbol`、`PARENT_ID(1)` |
-| `AMOUNT` | 整數（元） | 大額金額，整數元 | `fund.mktcap:AMOUNT` |
 
-「數值單位」（下面寫 X）＝BOOL、CODE 以外的九種。
+「數值單位」（下面寫 X）＝BOOL、CODE 以外的八種。
 
 BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c, 2)`（c 是條件）拒收，改法 `1:BOOL`；要數量寫 `2:COUNT`。
 
-**AMOUNT 是什麼**：MONEY 的 1e6 定點只放得下約 ±9.22 兆元。以元計的總額欄（市值、總資產）超過時用 AMOUNT（整數元）。
+**單位就是量**：`PRICE`、`QTY`、`AMOUNT`、`INDEX`、`PCT` 各是一種量——元／股、股、元、點、百分點；`RATIO`、`COUNT`、`DAYS`、`BOOL` 是不帶量的純數。乘除照量算（3.3）。存法只看是什麼量、不看資料：整數的量（股、元、次數、日數、真假、代碼）存整數，可分的量（元／股、比值、百分點、點）存 ×1e6 定點。
 
-- 欄一律標 MONEY；AMOUNT 只是公式裡的單位。
-- 欄裡有任何一格放不進 MONEY → 沒寫單位的欄名自動讀成 AMOUNT；也可以明寫 `欄名:AMOUNT`。
-- 兩個輸入一邊 MONEY、一邊 AMOUNT 時，MONEY 那邊自動換成它的 AMOUNT 版（整數元的總額欄、常數）。每股值（`eps`）不能跟 AMOUNT 混用。
+- 每股值（`eps`、`dps`、`FN_PS(…)`）跟價是同一種量，可以互比、加減、相除；公司總額（`revenue`、`fund.mktcap`）是元，跟價差一個股數。
+- 股數 × 價就是金額 AMOUNT（見 3.3 的「金額＝股數 × 價」）。
+- 舊寫法 `MONEY`（以前每股值與總額共用的單位）照收：`欄名:MONEY` 當那一欄自己的單位，常數 `5:MONEY` 當沒寫單位（照另一邊讀）。
 
 ### 3.3 單位代數：哪些能加、能乘、能比
 
 | 運算 | 收的輸入 → 輸出 | 擋住的例子 |
 |---|---|---|
-| `ADD`、`SUB`、`MAX2`、`MIN2` | (X, X) 同單位 → X；每股金額（MONEY）與 PRICE 互相加減、取大取小 → 跟第一個輸入 | `close + volume`（PRICE ＋ QTY） |
-| `GT`、`LT`（與 `>= <= == !=`） | (X, X) 同單位 → BOOL；每股金額（MONEY）與 PRICE 互比 → BOOL | `close > volume` |
-| `MUL` | (RATIO 或 BOOL, X) → X；(X, RATIO 或 BOOL) → X；(BOOL, BOOL) → BOOL；(COUNT 或 DAYS, X) → X；(X, COUNT 或 DAYS) → X | `close * volume`（PRICE × QTY；成交金額直接用欄 `px.turnover`） |
-| `RATIO`（`/`）、`MULDIV` | (X, X) 同單位 → RATIO；(X, RATIO) → X；(X, COUNT 或 DAYS) → X；(MONEY, QTY) → MONEY（每股金額，＝`FN_PS` 但股數 ≤ 0 不擋）；(MONEY, PRICE)、(PRICE, MONEY) → RATIO | `revenue > close`（公司總額跟價差一個股數：每股值寫 `FN_PS(revenue, shares)`，成交均價寫 `VWAP(N)`） |
+| `ADD`、`SUB`、`MAX2`、`MIN2` | (X, X) 同單位 → X | `close + volume`（PRICE ＋ QTY）；`revenue + close`（總額 ＋ 價） |
+| `GT`、`LT`（與 `>= <= == !=`） | (X, X) 同單位 → BOOL | `close > volume`；`revenue > close`（公司總額跟價差一個股數：每股值寫 `FN_PS(revenue, shares)`，成交均價寫 `VWAP(N)`） |
+| `MUL` | 量相加：(QTY, PRICE)、(PRICE, QTY) → AMOUNT（股數 × 價＝金額）；乘純數：(RATIO 或 BOOL, X) → X、(X, RATIO 或 BOOL) → X（真假乘數字＝條件乘權重）、(COUNT 或 DAYS, X) → X、(X, COUNT 或 DAYS) → X；(BOOL, BOOL) 不收（「且」寫 `&&`）；相加出來不是上面任何一種量 → 不收 | `volume * volume`（股 × 股）；總額 × 股數（`revenue * shares`）；`close * close` |
+| `RATIO`（`/`）、`MULDIV` | 量相減：(AMOUNT, QTY) → PRICE（金額 ÷ 股數＝每股值，＝`FN_PS` 但股數 ≤ 0 不擋）；(AMOUNT, PRICE) → QTY（金額 ÷ 價＝股數）；(X, X) 同單位 → RATIO；除以純數：(X, RATIO 或 COUNT 或 DAYS) → X；相減出來不是任何一種量 → 不收 | `close / volume`（元／股 ÷ 股）；`RATIO(close, revenue)`（每股值 ÷ 總額）；`RATIO(1:RATIO, close)` |
 | `LOGR` | (X, X) 同單位 → RATIO | |
 | `LOG`、百分位、Z 分數、報酬類 | X → RATIO | |
-| `SQRT` | RATIO → RATIO；PRICE／QTY／PCT／MONEY／INDEX → RATIO；COUNT／DAYS／AMOUNT 也收（文字層展開）→ RATIO | |
+| `SQRT` | RATIO → RATIO；PRICE／PCT／INDEX → RATIO；QTY／AMOUNT／COUNT／DAYS 也收（文字層展開）→ RATIO | |
 | `FLOOR`、`ROUND`、`CEIL` | 1e6 定點的 X → X；整數單位就是自己 | |
 | `EXP`、`SIN`、`COS`、`ATAN` | RATIO → RATIO | `EXP(close)` |
 | `NEG`、`ABS`、`DIFF`、視窗最大最小平均 | X → X | |
 | `LAG` | 任何非 CODE（含 BOOL）→ 同單位 | |
 | `NOT` | BOOL → BOOL | |
+| `AND` | (BOOL, BOOL) → BOOL | |
 | `OR` | (BOOL, BOOL) → BOOL | |
 | `FILL` | (X, X) 同單位（含 BOOL，不含 CODE）→ 同單位 | |
 | `MASK` | (BOOL, 任何非 CODE) → 第二個輸入的單位 | |
 | `VALID`、`EV_CHANGE`、`in {…}` | 任何（含 CODE）→ BOOL | |
 
 兩邊都是整數單位相乘時：COUNT × COUNT → COUNT、COUNT × DAYS → DAYS、DAYS × DAYS → DAYS。同單位相除一律是 RATIO（COUNT ÷ COUNT 是比值）。
+
+**金額＝股數 × 價**：元／股（PRICE：價、每股值）乘上股數（QTY）就是金額，單位 AMOUNT（整數元，往下取整；正負都收）；只有股數的欄（法人買賣超、融資餘額）乘上價就是金額，`eps * shares` 是總盈餘。沒寫單位的門檻照另一邊讀成 AMOUNT；金額 ÷ 股數回到元／股（PRICE），可以跟價比；金額 ÷ 價是股數。`close` 是還原價，要當天成交價的口徑寫 `raw.close`。
+
+| 白話 | 寫法 |
+|---|---|
+| 近 5 日外資買超金額超過 5 億元 | `WSUM(5, foreign_net * close) > 5e8` |
+| 外資近 20 日買超的平均價高於收盤 | `WSUM(20, foreign_net * close) / WSUM(20, foreign_net) > close` |
 
 不同單位要相比，先換成不帶單位的數：`RATIO(close, LAG(20, close))`、`CS_PCT(x)`、`LOG(x)`。
 
@@ -358,9 +413,9 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 - 任一輸入無效 → 輸出無效。視窗類算子：視窗內任何一格無效 → 無效（另有規則的在該列寫明）。
 - 視窗 N 含當天：`[t−N+1, t]`。`LAG(N, x)` 是 N 個交易日前。
 - 暖機相加：外層的暖機＝子節點暖機＋自己的。
-- 報酬類（`RVOL`、`SKEW`、`KURT`、`ACORR`、`BETA`、`RESID_MOM`）內部用對數報酬 `ln(x[t]/x[t−1])`，價 ≤ 0 → 無效。成交量、分數這類任何序列本身的偏態、峰度、自相關用 `WSKEW`、`WKURT`、`WACORR`（不取報酬、不必大於 0）。
-- 層級 L：0＝全部（選股範圍內）、1＝產業、2＝市場、3＝國家、4＝全球。
-- 跨檔與分群的成員＝當天在選股範圍內、而且輸入有效的股票；非成員的輸出無效。
+- 報酬類（`RVOL`、`SKEW`、`KURT`、`ACORR`、`RESID_MOM`）內部用對數報酬 `ln(x[t]/x[t−1])`，價 ≤ 0 → 無效。成交量、分數這類任何序列本身的偏態、峰度、自相關用 `WSKEW`、`WKURT`、`WACORR`（不取報酬、不必大於 0）。
+- 層級 L：0＝全部（選股範圍內）、1＝產業（也可以寫 `industry`）、2＝這張面板的整個市場（交易所是代碼欄 `market`，不是這一層）、3＝國家（也可以寫 `country`）、4＝全球。第 3、4 層現在的面板還沒有資料：寫了每一格都沒有值。
+- 跨檔與分群的成員＝當天在選股範圍內、而且輸入有效的股票。逐格算的（名次、`CS_Z`、x − 群均值、殘差這類）非成員的輸出無效（`CS_NEUTRAL_IND` 的 w 只當均值的權重：範圍內有群、自己 x 有效就有值，自己 w ≤ 0 也有）；整群算一個數的歸約（`GSUM`、`GCOUNT`、`GMAX`、`GMIN`、`GQUANT`、`GSTD`、`GMEAN`、`GWMEAN` 與群鍵版）寫給範圍內有群的每一檔，自己的輸入無效也拿得到，群當天 0 個成員才無效（`GSUM_ALL`、`GCOUNT_ALL` 不看範圍）。
 - 輸出只有少數幾個值的節點（桶號、旗標、群的和與均值——同群每檔同值）當整條分數會大量並列；它們是零件，拿去當條件、群鍵，或跟逐檔的值相除、相減。
 
 ### 4.2 葉、常數
@@ -378,13 +433,13 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | 簽名 | 層 | 參數 | 單位 | 無效與暖機 | 意思 | 例子 |
 |---|---|---|---|---|---|---|
 | `ADD(a, b)` | 原 | — | (X, X) 同單位 → 同 | 溢位 → 無效 | a + b | `ADD(CS_PCT(RET(20, close)), CS_PCT(RET(60, close)))` |
-| `SUB(a, b)` | 原 | — | (X, X) 同單位 → 同 | 溢位 → 無效 | a − b | `SUB(RET(60, close), RET(60, idx.taiex_tr))` |
+| `SUB(a, b)` | 原 | — | (X, X) 同單位 → 同 | 溢位 → 無效 | a − b | `SUB(RET(60, close), RET(60, mkt.idx_tr))` |
 | `MUL(a, b)` | 原 | — | 見 3.3 | 積放不進 i64 → 無效 | a × b；有尺度時 ÷1e6 再取整 | `MUL(RET(20, close), VOL_RATIO(20, volume))` |
 | `RATIO(a, b)`（`DIV`） | 原 | — | 見 3.3 | b = 0 → 無效 | a ÷ b，往下取整 | `RATIO(low, close)` |
 | `MULDIV(K, a, b)` | 原 | K 1..1,000,000,000 | 同 `RATIO(a, b)` | b = 0 或結果放不進 i64 → 無效 | K × a ÷ b，乘積 128 位、只取整一次；K × a 再大也不會溢位（`RATIO(MUL(K:COUNT, a), b)` 在 K × a 放不進 i64 時無效，其餘格兩者相同） | `MULDIV(4, net_income, equity)` |
 | `NEG(a)` | 原 | — | X → 同 | i64 最小值 → 無效 | −a | `NEG(RVOL(60, close))` |
 | `ABS(a)` | 原 | — | X → 同 | | 絕對值 | `ABS(SUB(CS_PEER_RANK(1, close), CS_PEER_RANK(1, fund.mktcap)))` |
-| `SQRT(a)` | 原 | — | RATIO → RATIO；PRICE／QTY／PCT／MONEY／INDEX → RATIO；COUNT／DAYS／AMOUNT → RATIO（文字層展開） | a < 0 → 無效 | ⌊√a⌋（定點）；輸出是不帶單位的數 | `SQRT(fund.mktcap)` |
+| `SQRT(a)` | 原 | — | RATIO → RATIO；PRICE／PCT／INDEX → RATIO；QTY／AMOUNT／COUNT／DAYS → RATIO（文字層展開） | a < 0 → 無效 | ⌊√a⌋（定點）；輸出是不帶單位的數 | `SQRT(fund.mktcap)` |
 | `LOG(a)` | 原 | — | X → RATIO | a ≤ 0 → 無效 | 自然對數 | `LOG(MUL(MUL(RET(20, close), RET(20, close)), VOL_RATIO(20, volume)))` |
 | `EXP(a)` | 原 | — | RATIO → RATIO | 超出 i64 → 無效 | e 的 a 次方 | `EXP(NEG(RVOL(60, close)))` |
 | `LOGR(a, b)` | 原 | — | (X, X) 同單位 → RATIO | 任一 ≤ 0 → 無效 | ln(a ÷ b)，只取整一次（`LOG(RATIO(a, b))` 取整兩次，會差最低位） | `LOGR(close, LAG(1, close))` |
@@ -404,7 +459,8 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | `GT(a, b)` | 原 | — | (X, X) 同單位 → BOOL | | a > b → 1，否則 0 | `MASK(GT(close, open), RET(5, close))` |
 | `LT(a, b)` | 原 | — | (X, X) 同單位 → BOOL | | a < b → 1，否則 0 | `MASK(LT(close, ROLL_MEAN(20, close)), NEG(RET(5, close)))` |
 | `NOT(a)` | 原 | — | BOOL → BOOL | | 非 | `MASK(NOT(close < ROLL_MEAN(60, close)), RET(20, close))` |
-| `OR(a, b)` | 保 | — | (BOOL, BOOL) → BOOL | 任一無效 → 無效（沒有短路） | 或。「且」是 `MUL(a, b)` | `MASK(OR(RET(5, close) > 0.1, VOL_RATIO(20, volume) >= 3), RET(5, close))` |
+| `AND(a, b)` | 原 | — | (BOOL, BOOL) → BOOL | 一邊確定為假 → 假；否則有一邊無效 → 無效 | 且（`a && b`） | `MASK(AND(RET(5, close) > 0.1, VOL_RATIO(20, volume) >= 3), RET(5, close))` |
+| `OR(a, b)` | 保 | — | (BOOL, BOOL) → BOOL | 一邊確定為真 → 真；否則有一邊無效 → 無效 | 或。「且」是 `AND(a, b)` | `MASK(OR(RET(5, close) > 0.1, VOL_RATIO(20, volume) >= 3), RET(5, close))` |
 | `VALID(x)` | 原 | — | 任何（含 CODE）→ BOOL | 永遠有效 | x 有效 → 1，否則 0 | `MASK(WSUM(250, VALID(close)) >= 250, RET(60, close))` |
 | `FILL(x, c)` | 原 | — | (X, X) 同單位（含 BOOL，不含 CODE）→ 同 | x、c 都無效才無效 | x 有效用 x，否則用 c | `ADD(FILL(foreign_net, 0:QTY), FILL(trust_net, 0:QTY))` |
 | `MASK(c, x)` | 原 | — | (BOOL, 任何非 CODE) → x 的單位 | c 無效或為假 → 無效 | c 為真才有 x | `MASK(VOL_RATIO(20, volume) >= 3, RET(1, close))` |
@@ -445,8 +501,8 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | `WACORR(N, k, x)` | 原 | N 3..252；1 ≤ k ≤ N−2 | X → RATIO | 同 `WSKEW` | 近 N 日 x 本身的落後 k 期自相關（樣本 ACF） | `WACORR(60, 1, volume)` |
 | `SLOPE(N, x)` | 原 | N 2..252 | X → 同 | 暖機 N−1 | 近 N 日對時間的線性回歸斜率（每日） | `RATIO(SLOPE(60, close), close)` |
 | `R2(N, x)` | 原 | N 3..252 | X → RATIO 0..1 | 暖機 N−1 | 同一條回歸的 R² | `R2(60, close)` |
-| `WREG(N, mode, y, x)` | 原 | N 3..1,260；mode 0 斜率、1 截距、2 今天的殘差、3 R²、4 斜率 t 值 | (X, X) 同單位 → mode 0、3、4 是 RATIO，1、2 同 y | 暖機 N−1；視窗內任一格無效、x 沒有變化 → 無效 | y 對 x 近 N 日的一元迴歸（最小平方；精確和，只取整一次）；寫法用名字 `REG_SLOPE`…`REG_T`（5.2） | `REG_SLOPE(120, RET(1, close), RET(1, idx.taiex))` |
-| `INV_VOL_KEY(N, x)` | 原 | N 2..1,260 | RATIO → COUNT（16,384..1,073,741,824） | 暖機 N−1；視窗內有效的格不到一半 → 無效 | x 近 N 日波動的倒數，當權重鍵（越穩越大）：視窗內有效的 k 格平方和 Q，vol ＝ ⌊√⌊Q ÷ k⌋ ÷ 10⌋（10 萬分之一，夾在 1..65,535），值 ＝ ⌊2³⁰ ÷ vol⌋。`weighting="inv_vol"`（`apx.INV_VOL_KEY()`）的波動就是 `INV_VOL_KEY(20, RET(1, close))` | `apx.SHARE(apx.PICK(10, false), INV_VOL_KEY(60, RET(1, close)))` |
+| `WREG(N, mode, y, x)` | 原 | N 3..1,260；mode 0 斜率、1 截距、2 今天的殘差、3 R²、4 斜率 t 值 | (X, X) 同單位 → mode 0、3、4 是 RATIO，1、2 同 y | 暖機 N−1；視窗內任一格無效、x 沒有變化 → 無效 | y 對 x 近 N 日的一元迴歸（最小平方；精確和，只取整一次）；寫法用名字 `REG_SLOPE`…`REG_T`（5.2） | `REG_SLOPE(120, RET(1, close), RET(1, mkt.idx))` |
+| `INV_VOL_KEY(N, x)` | 原 | N 2..1,260 | RATIO → COUNT（16,384..1,073,741,824） | 暖機 N−1；視窗內有效的格不到一半 → 無效 | x 近 N 日波動的倒數，當權重鍵（越穩越大）：視窗內有效的 k 格平方和 Q，vol ＝ ⌊√⌊Q ÷ k⌋ ÷ 10⌋（10 萬分之一，夾在 1..65,535），值 ＝ ⌊2³⁰ ÷ vol⌋。`weighting="inv_vol"` 就是權重鍵 `INV_VOL_KEY(20, RET(1, close))` | `apx.SHARE(apx.PICK(10, false), INV_VOL_KEY(60, RET(1, close)))` |
 | `MAXDD(N, x)` | 原 | N 2..252 | X → RATIO | 暖機 N−1 | 近 N 日最大回撤（正數；舊定義） | `NEG(MAXDD(250, close))` |
 | `DIST_HIGH(N, x)` | 保 | N 2..1,260 | X → RATIO（≤ 0） | 暖機 N−1 | x[t] ÷ 近 N 日最高 − 1 | `DIST_HIGH(250, close)` |
 | `DIST_LOW(N, x)` | 保 | N 2..1,260 | X → RATIO（≥ 0） | 暖機 N−1 | x[t] ÷ 近 N 日最低 − 1 | `DIST_LOW(250, close)` |
@@ -454,9 +510,8 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | `DOWN_STREAK(N, x)` | 保 | N 1..252 | X → COUNT | 暖機 N | 連續下跌的天數，封頂 N | `NEG(DOWN_STREAK(20, close))` |
 | `CORR(N, a, b)` | 原 | N 3..252 | (X, Y) 任意數值 → RATIO | 暖機 N−1 | 近 N 日 a 與 b 的 Pearson 相關 | `NEG(CORR(60, close, volume))` |
 | `VOL_RATIO(N, x)` | 保 | N 1..252 | X → RATIO | 暖機 N | x[t] ÷ 前 N 日（不含今天）的平均 | `VOL_RATIO(20, volume)` |
-| `AMIHUD(N, a, b)` | 原 | N 1..252 | (X, MONEY) → RATIO | 暖機 N | 近 N 日 \|a 的日報酬\| × 1e9 ÷ 成交金額 b 的平均（越大越不流動） | `AMIHUD(20, close, px.turnover)` |
-| `BETA(N, a, b)` | 原 | N 3..252 | (X, Y) 任意數值 → RATIO | 暖機 N | a 對 b 的對數報酬的共變異 ÷ b 的變異 | `NEG(BETA(120, close, idx.taiex))` |
-| `RESID_MOM(N, a, b)` | 原 | N 3..252 | (X, Y) 任意數值 → RATIO | 暖機 N | 扣掉 β × b 的報酬後，a 的 N 日累計殘差 | `RESID_MOM(120, close, idx.taiex)` |
+| `AMIHUD(N, a, b)` | 原 | N 1..252 | (X, AMOUNT) → RATIO | 暖機 N | 近 N 日 \|a 的日報酬\| × 1e9 ÷ 成交金額 b 的平均（越大越不流動） | `AMIHUD(20, close, px.turnover)` |
+| `RESID_MOM(N, a, b)` | 原 | N 3..252 | (X, Y) 任意數值 → RATIO | 暖機 N | 扣掉 β × b 的報酬後，a 的 N 日累計殘差 | `RESID_MOM(120, close, mkt.idx)` |
 
 ### 4.6 遞推與重置
 
@@ -465,17 +520,19 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | `SCANSUM(r, x)` | 原 | — | (BOOL, X) → 同 x | 第一次 r 為真之前無效；r 或 x 無效 → 當天無效、斷到下一次 r 為真 | r 為真那天從 x 重新起算，之後逐日累加 x | `SCANSUM(foreign_net <= 0, MUL(foreign_net > 0, 1:COUNT))` |
 | `SCANMAX(r, x)` | 原 | — | (BOOL, X) → 同 x | 同 `SCANSUM` | 上次 r 為真以來（含當天）x 的最大值 | `RATIO(close, SCANMAX(EV_CHANGE(revenue_m) && revenue_m >= ROLL_MAX(250, revenue_m), close))` |
 | `SCANMIN(r, x)` | 原 | — | (BOOL, X) → 同 x | 同 `SCANSUM` | 上次 r 為真以來（含當天）x 的最小值 | `RATIO(close, SCANMIN(EV_CHANGE(revenue_m), close))` |
+| `SCANSTD(r, x)` | 原 | — | (BOOL, X) → 同 x | 同 `SCANSUM`；r 為真那天只有一筆 → 無效 | 上次 r 為真以來（含當天）x 的母體標準差；精確式只取整一次，和再大也不會無效 | `NEG(SCANSTD(close > ROLL_MAX(60, LAG(1, close)), RET(1, close)))` |
 | `LATCH(r, x)` | 原 | — | (BOOL, X) → 同 x | 第一次取樣前無效；取樣那天 x 無效 → 沿用到下次取樣前都無效 | r 為真那天記下 x，之後沿用 | `MASK(LAG(5, EV_CHANGE(revenue)), RATIO(close, LATCH(EV_CHANGE(revenue), LAG(1, close))))` |
 | `SMOOTH(K, a, x)` | 原 | K 0..756 | (RATIO, X) → 同 x | x 無效 → 無效並重新起算；起點後 K 步內無效；暖機 K | 指數平滑 y ← y + ⌊a·(x − y)⌋，起點 y = x | `RATIO(close, SMOOTH(60, 0.1:RATIO, close))` |
-| `RWIN(k, mode, x)` | 原 | k 1..12；mode 0 第 k 期前的值／1 近 k 期和／2 平均／3 最小／4 最大／5 標準差／7 與第 k 期前的差 | X → 同 | 期數不夠 → 無效 | 依公布次序的視窗：一「期」＝一次值變（季報一季、月營收一個月） | `RATIO(RWIN(4, 1, fund.div_paid), fund.mktcap)` |
+| `RWIN(k, mode, x)` | 原 | k 1..12；mode 0 第 k 期前的值／1 近 k 期和／2 平均／3 最小／4 最大／5 標準差／7 與第 k 期前的差；分位數、名次寫名字 `RWIN_QUANT`、`RWIN_RANK`（見下） | X → 同（名次 → COUNT） | 期數不夠 → 無效 | 依公布次序的視窗：一「期」＝一次值變（季報一季、月營收一個月） | `RATIO(RWIN(4, 1, fund.div_paid), fund.mktcap)` |
 | `RWIN_PCT(k, x)` | 原 | k 1..12 | X → RATIO | 第 k 期前的值 = 0 → 無效 | (本期 − 第 k 期前) ÷ \|第 k 期前\|；月營收年增 k = 12 | `RWIN_PCT(12, revenue_m)` |
-| `EWIN(k, mode, b, x)` | 原 | k 1..20；mode 同 `RWIN` | (BOOL, X) → 同 x | 期數不夠、當天 x 或 b 無效 → 無效 | 依事件次序的視窗：一「期」＝ b 為真（且 x 有效）的一天；`RWIN(k, m, x)` ＝ `EWIN(k, m, EV_CHANGE(x), x)` | `EWIN(4, 2, EV_CHANGE(revenue_m), RET(1, close))`（最近 4 次月營收公布當天的平均漲跌） |
+| `EWIN(k, mode, b, x)` | 原 | k 1..20；mode 同 `RWIN`；分位數、名次寫名字 `EWIN_QUANT`、`EWIN_RANK` | (BOOL, X) → 同 x（名次 → COUNT） | 期數不夠、當天 x 或 b 無效 → 無效 | 依事件次序的視窗：一「期」＝ b 為真（且 x 有效）的一天；`RWIN(k, m, x)` ＝ `EWIN(k, m, EV_CHANGE(x), x)` | `EWIN(4, 2, EV_CHANGE(revenue_m), RET(1, close))`（最近 4 次月營收公布當天的平均漲跌） |
 
-- 重置類的常見組合：連續天數 `SCANSUM(不成立, MUL(成立, 1:COUNT))`；事件以來最高 `SCANMAX(事件, x)`；事件當天的值 `LATCH(事件, x)`。
+- 重置類的常見組合：連續天數 `SCANSUM(不成立, MUL(成立, 1:COUNT))`；事件以來最高 `SCANMAX(事件, x)`；進場以來的波動 `SCANSTD(進場, RET(1, close))`；事件當天的值 `LATCH(事件, x)`。
 - `RWIN` 的暖機以「期」計，換不成固定天數；面板前段期數不夠的格無效。
 - 近四季合計（TTM）＝`RWIN(4, 1, x)`；去年同月＝`RWIN(12, 0, revenue_m)`；上一季＝`RWIN(1, 0, x)`；比上一期的變化＝`RWIN(1, 7, x)`。
 - 「期」不是值變、而是某個條件成立的日子，用 `EWIN`：最近 3 次爆量那天的收盤平均 `EWIN(3, 2, volume > 2 * ROLL_MEAN(20, volume), close)`；條件 c 最近一次成立那天的收盤是 `LATCH(c, close)`，再前一次是 `EWIN(1, 0, c, close)`。
 - 例：最近 4 次季報公布當天的平均反應＝`EWIN(4, 2, EV_CHANGE(revenue), RET(1, close))`——`EV_CHANGE(revenue)` 是季報公布日（季營收換值那天），每次公布當天的 1 日報酬算一期，取最近 4 期平均；公布不滿 4 次的股票無效。改成 `EWIN(4, 3, …)` 是 4 次裡最差的一次，`EWIN(1, 0, …)` 是上一次的反應。
+- 最近 k 期的中位數（分位數）與名次：`RWIN_QUANT(k, q, x)`＝最近 k 期公布值由小到大第 ⌊q·(k−1)/100⌋ 個（q 0..100，50＝中位數；取法同 `WQUANT`、`GQUANT`），例：每股盈餘高於最近 8 季的中位數 `eps > RWIN_QUANT(8, 50, eps)`。`RWIN_RANK(k, x)`＝目前這一期在最近 k 期裡的名次＝2 ×（比它小的期數）＋（跟它相等的期數，含自己）− 1（個數 COUNT，數法同 `WRANK`；k 2..12；k 期都不同時最低 0、最高 2k − 2），例：季營收是最近 12 季最高 `RWIN_RANK(12, revenue) >= 22`；要 0～1 的比例自己除：`RATIO(RWIN_RANK(12, revenue), 22:COUNT)`。期是「條件成立的日子」時用 `EWIN_QUANT(k, q, b, x)`、`EWIN_RANK(k, b, x)`（k 到 20）。不到 k 期、當天 x（或 b）無效 → 無效。定義式在第 5.2 節。
 - 兩條序列的迴歸用下表五個名字，都寫 `(N, y, x)`：y 對 x，y、x 同單位（報酬對報酬、價對價；對時間的斜率用 `SLOPE`）。它們是保留函數（5.2），展開成同一個原子 `WREG(N, mode, y, x)`，名字決定讀哪一個輸出（mode）：
 
   | 名字 | mode | 輸出 | 單位 | 意思 |
@@ -498,7 +555,7 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | `CS_RANK_MEAN(N, x)` | 保 | N 2..250 | X → RATIO | 今天要有效、近 N 日有效日 ≥ ⌈N/2⌉；暖機 N−1 | 近 N 日 `CS_PCT` 的平均 | `CS_RANK_MEAN(20, RET(5, close))` |
 | `CS_RANKMIX(L, flags, a, b)` | 保 | L 0..4；flags 0..3（1 取反 a、2 取反 b、3 兩邊都取反） | (X, Y) 任意數值 → RATIO 0..2 | 兩邊都要是成員；成員少於 2 檔 → 無效 | a、b 各在群 L 內排百分位再相加（等權兩因子） | `CS_RANKMIX(0, 2, FN_EP(eps, close), RVOL(60, close))` |
 | `CS_REL_RET(N, L, x)` | 保 | N 1..252；L 0..4 | X → RATIO | 暖機 N | N 日報酬 − 同群報酬均值 | `CS_REL_RET(20, 1, close)` |
-| `CS_NEUTRAL_IND(L, x, w)` | 保 | L 1..4 | (X, 任意數值) → 同 x | w > 0 才是成員；x − 均值超出 i64 → 無效 | x − 同群成員的 w 加權均值＝`SUB(x, GWMEAN(L, w, x))`，逐位元相同（第 5.1 節） | `CS_NEUTRAL_IND(1, RET(20, close), fund.mktcap)` |
+| `CS_NEUTRAL_IND(L, x, w)` | 保 | L 1..4 | (X, 任意數值) → 同 x | w > 0 才算進均值；自己 x 有效就有值（自己 w ≤ 0 也有）；x − 均值超出 i64 → 無效 | x − 同群成員的 w 加權均值＝`SUB(x, GWMEAN(L, w, x))`，逐位元相同（第 5.1 節） | `CS_NEUTRAL_IND(1, RET(20, close), fund.mktcap)` |
 | `CS_NEUTRAL_SIZE(x, z)` | 保 | — | (X, 任意數值) → 同 x | | x 對 [1, z] 在範圍內的回歸殘差（＝`GRESID(0, x, z)`，全市場一群） | `CS_NEUTRAL_SIZE(RET(20, close), LOG(fund.mktcap))` |
 | `CS_NEUTRAL_COUNTRY(x, w)` | 保 | — | (X, 任意數值) → 同 x | | 同 `CS_NEUTRAL_IND`，群固定是國家（多市場面板用） | `CS_NEUTRAL_COUNTRY(RET(20, close), fund.mktcap)` |
 | `CS_NEUTRAL_MODEL(p, x, q)` | 原 | p＝層級 1..4 ＋ K × 256，K ≤ 16 | (X, 任意數值) → 同 x | | 同群去均值後，再減對 K 個曝險欄的投影；q 要是風險模型寫回的欄 | — |
@@ -511,13 +568,13 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 
 | 給法 | 寫法 | 群怎麼定 |
 |---|---|---|
-| 層級 | `GSUM(L, x)`：第一個引數是**沒帶單位的整數** | L 0 全部、1 產業、2 市場、3 國家、4 全球；沒有第 L 層歸屬的股票無效 |
+| 層級 | `GSUM(L, x)`：第一個引數是**沒帶單位的整數** | L 0 全部、1 產業（也可以寫 `industry`；市場有產業代碼才有，沒有的分群用 `CORR_GROUP`）、2 這張面板的整個市場、3 國家（也可以寫 `country`）、4 全球（第 3、4 層現在還沒有資料，每一格都沒有值）；沒有第 L 層歸屬的股票無效 |
 | 群鍵 | `GSUM(k, x)`：第一個引數是其他任何東西（欄、算式、帶單位的常數 `0:COUNT`）；印出來是 `GSUM_BY(k, x)` | 同一天群鍵相同的股票一群；群鍵單位 CODE／COUNT／BOOL／DAYS |
 | 全面板成員 | `GSUM_ALL(L, x)` | 群照層級 L，但成員**不看選股範圍** |
 
 | 簽名 | 層 | 參數 | 單位 | 無效與暖機 | 意思 | 例子 |
 |---|---|---|---|---|---|---|
-| `GSUM(L, x)` | 原 | L 0..4 | X → 同；BOOL → COUNT | 和放不進 i64 → 整群無效 | 同群成員的和，每個成員都拿到 | `RATIO(volume, GSUM(1, volume))` |
+| `GSUM(L, x)` | 原 | L 0..4 | X → 同；BOOL → COUNT | 和放不進 i64 → 整群無效 | 同群成員的和，範圍內同群每一檔都拿到 | `RATIO(volume, GSUM(1, volume))` |
 | `GCOUNT(L, x)` | 原 | L 0..4 | 任何（含 BOOL、CODE）→ COUNT | | 同群成員數 | `RATIO(GRANK(1, RET(20, close)), GCOUNT(1, RET(20, close)))` |
 | `GRANK(L, x)` | 原 | L 0..4 | X → COUNT | 成員少於 2 檔 → 無效 | 同群裡的中位名次 2·比它小的個數＋同值個數−1 | `GRANK(1, RET(20, close))` |
 | `GMAX(L, x)` | 原 | L 0..4 | X → 同（不收 BOOL） | 成員 1 檔也算 | 同群最大值 | `RATIO(RET(20, close), GMAX(1, RET(20, close)))` |
@@ -559,8 +616,8 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | 群鍵舉例 | `PARENT_ID(1)`（產業）、`CS_QCUT(5, ROLL_MEAN(20, volume))`（均量五組）、`close > open`（紅黑 K）、`MONTH()`、`CORR_GROUP(…)`（第 6 章） |
 
 - CODE（代碼欄、`PARENT_ID`）只能當群鍵，不能做數學，也不能當整條公式。
-- 條件裡的產業群鍵可以直接寫 `industry`；分數公式裡寫 `PARENT_ID(1)`。
-- 例：股價高於同產業中位數＝`close > GQUANT(50, 1, close)`（`1` 是產業層；寫 `PARENT_ID(1)` 一樣）。比中位數高多少（不被極端值拉動，比「減平均」穩）＝`RET(20, close) - GQUANT(50, 1, RET(20, close))`；市值十組裡各組的中位數 `GQUANT(50, CS_QCUT(10, fund.mktcap), x)`；全市場的中位數 `GQUANT(50, 0, x)`。
+- 產業群鍵直接寫 `industry`（條件與分數公式都收，跟寫 `1`、`PARENT_ID(1)` 同一套分群）。
+- 例：股價高於同產業中位數＝`close > GQUANT(50, 1, close)`（`1` 是產業層；寫 `industry`、`PARENT_ID(1)` 一樣）。比中位數高多少（不被極端值拉動，比「減平均」穩）＝`RET(20, close) - GQUANT(50, 1, RET(20, close))`；市值十組裡各組的中位數 `GQUANT(50, CS_QCUT(10, fund.mktcap), x)`；全市場的中位數 `GQUANT(50, 0, x)`。
 - 群內百分位每一群的第一名都是 1，當整條分數會大量並列；排名分數用「比同群平均高多少」。一定要用群內百分位（例 `GPCT(g, x)`、產業內百分位 `CS_PEER_RANK(1, x)`）時一起給 `portfolio.tie_by` 寫被排名的那個值（例 `"tie_by": "x"`），並列時照它分先後。
 
 ### 4.9 事件
@@ -580,14 +637,16 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 |---|---|---|---|---|---|---|
 | `FN_YOY(N, x)` | 保 | N 1..1,260 | X → RATIO | 任一 ≤ 0 → 無效；暖機 N | ln(x[t] ÷ x[t−N])：對數成長（0.1 約 10%） | `FN_YOY(252, revenue_m)` |
 | `FN_EGROW(N, x)` | 保 | N 1..252 | X → RATIO | 基期 0 → 無效；暖機 N | (x[t] − x[t−N]) ÷ \|x[t−N]\|：基期為負也算得出來 | `CS_PCT(FN_EGROW(252, eps))` |
-| `FN_GM_CHG(N, a, b)` | 保 | N 1..252 | (MONEY, MONEY) → RATIO | b ≤ 0 → 無效；暖機 N | a＝毛利、b＝營收：毛利率 − N 日前的毛利率 | `FN_GM_CHG(252, fund.gross, revenue)` |
-| `FN_DY(N, a, b)` | 保 | N 1..252 | (MONEY, PRICE) → RATIO | b ≤ 0 → 無效；a 要是只在除息日有值的每股股利欄；暖機 N−1 | 近 N 日股利和 ÷ 價＝殖利率 | `FN_DY(250, dps, raw.close)` |
+| `FN_GM_CHG(N, a, b)` | 保 | N 1..252 | (X, X) 同單位 → RATIO（毛利、營收是 AMOUNT） | b ≤ 0 → 無效；暖機 N | a＝毛利、b＝營收：毛利率 − N 日前的毛利率 | `FN_GM_CHG(252, fund.gross, revenue)` |
+| `FN_DY(N, a, b)` | 保 | N 1..252 | (PRICE, PRICE) → RATIO | b ≤ 0 → 無效；a 要是只在除息日有值的每股股利欄；暖機 N−1 | 近 N 日股利和 ÷ 價＝殖利率 | `FN_DY(250, dps, raw.close)` |
 
-每股值與總額不能混：`FN_EP`、`FN_BP`、`FN_DY` 的第一個輸入要是每股值（`eps`、`dps`、`FN_PS(…)`）；兩個金額輸入一個每股值、一個總額也會被擋。總額要比市值寫 `RATIO(總額, fund.mktcap)`。
+每股值與總額是不同的量：`FN_EP`、`FN_BP`、`FN_DY` 照除法推、要推出比值，所以第一個輸入要跟價同一種量（每股值 `eps`、`dps`、`FN_PS(…)`）；總額 ÷ 價是股數、不是比值，會被擋。總額要比市值寫 `RATIO(總額, fund.mktcap)`。
 
 由資料欄相除得到的財報比值 `FN_PS`、`FN_EP`、`FN_BP`、`FN_ROE`、`FN_ACCRUAL` 歸資料，在第 7.4 節。這裡留下的四個都帶視窗（N 期前、近 N 日加總），是由原子組成的計算。
 
 ### 4.11 日曆
+
+日期是資料、拆年月日是原子：這一列是哪一天（`EPOCH_DAY()`，交易所日曆）與面板第幾列（`DAY_INDEX()`）是外面來的，層標「資」；`MONTH()`、`WEEKDAY()`、`MDAY()`、`YEAR()` 把日期拆成月份、星期、幾號、年份，是計算，層標「原」。名字、寫法、結果都不因分類而變。
 
 | 簽名 | 層 | 參數 | 單位 | 無效與暖機 | 意思 | 例子 |
 |---|---|---|---|---|---|---|
@@ -595,8 +654,8 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | `WEEKDAY()` | 原 | — | → COUNT 0..6 | 同上 | 星期，0＝週一、4＝週五 | `MASK(WEEKDAY() == 0, NEG(RET(1, close)))` |
 | `MDAY()` | 原 | — | → COUNT 1..31 | 同上 | 幾號 | `MASK(MDAY() <= 10, RET(5, close))` |
 | `YEAR()` | 原 | — | → COUNT | 同上 | 公曆年份 | `MASK(YEAR() >= 2020, RET(60, close))` |
-| `EPOCH_DAY()` | 原 | — | → DAYS | 同上 | 1970-01-01 起第幾天（日曆日，休市日也算）；週序＝`FLOOR((EPOCH_DAY() + 3) / 7)`（週一起算） | `EPOCH_DAY() - LAG(1, EPOCH_DAY()) >= 4`（隔了長假的第一個交易日） |
-| `DAY_INDEX()` | 原 | — | → DAYS | 永遠有效 | 面板第幾天（第一天 0） | `SCANSUM(DAY_INDEX() < 1, volume)` |
+| `EPOCH_DAY()` | 資 | — | → DAYS | 同上 | 1970-01-01 起第幾天（日曆日，休市日也算）；週序＝`FLOOR((EPOCH_DAY() + 3) / 7)`（週一起算） | `EPOCH_DAY() - LAG(1, EPOCH_DAY()) >= 4`（隔了長假的第一個交易日） |
+| `DAY_INDEX()` | 資 | — | → DAYS | 永遠有效 | 面板第幾天（第一天 0） | `SCANSUM(DAY_INDEX() < 1, volume)` |
 
 日曆月與上市天數的保留函數（`TDAY_OF_MONTH`、`AT_MONTH_START`、`LISTED_TDAYS`、`LISTED_DAYS`）在 5.2。
 
@@ -727,7 +786,7 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | 保留函數 | 原子定義式 | 前提 |
 |---|---|---|
 | `DIFF(N, x)` | `SUB(x, LAG(N, x))` | |
-| `OR(a, b)` | `NOT(MUL(NOT(a), NOT(b)))` | |
+| `OR(a, b)` | `NOT(AND(NOT(a), NOT(b)))` | |
 | `MAX2(a, b)` | `FILL(MASK(GT(a, b), a), MASK(VALID(a), b))` | |
 | `MIN2(a, b)` | `FILL(MASK(LT(a, b), a), MASK(VALID(a), b))` | |
 | `SELECT(c, a, b)`（寫成 `c ? a : b`） | `FILL(MASK(c, a), MASK(NOT(c), b))` | |
@@ -748,23 +807,23 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | `DIST_HIGH(N, x)` | `MASK(GT(ROLL_MAX(N, x), 0), RATIO(SUB(x, ROLL_MAX(N, x)), ROLL_MAX(N, x)))` | |
 | `DIST_LOW(N, x)` | `MASK(GT(ROLL_MIN(N, x), 0), RATIO(SUB(x, ROLL_MIN(N, x)), ROLL_MIN(N, x)))` | |
 | `FN_YOY(N, x)` | `LOGR(x, LAG(N, x))` | |
-| `FIRST_IN_WINDOW(N, b)` | `MUL(b, LT(WSUM(N-1, LAG(1, b)), 1:COUNT))` | b 只有 0／1（比較、`NOT`、`OR`、`VALID`、`EV_PULSE`、`EV_CHANGE` 與它們的 `LAG`、`MASK`、`FILL`、BOOL 相乘） |
+| `FIRST_IN_WINDOW(N, b)` | `MASK(VALID(b), MASK(VALID(WSUM(N-1, LAG(1, b))), AND(b, LT(WSUM(N-1, LAG(1, b)), 1:COUNT))))` | b 只有 0／1（比較、`NOT`、`OR`、`VALID`、`EV_PULSE`、`EV_CHANGE`、`AND` 與它們的 `LAG`、`MASK`、`FILL`） |
 | `COUNT(N, b)` | `WSUM(N, b)` | |
 | `EV_POST_N(N, b)` | `LAG(N, b)` | |
 | `EV_PULSE(c)` | `VALID(c)` | c 是欄 |
-| `FN_DY(N, a, b)` | `MASK(GT(b, 0), RATIO(WSUM(N, FILL(a, 0:MONEY)), b))` | a ≥ 0（股利） |
+| `FN_DY(N, a, b)` | `MASK(GT(b, 0), RATIO(WSUM(N, FILL(a, 0:PRICE)), b))` | a ≥ 0（股利） |
 | `FN_EGROW(N, x)` | `RATIO(SUB(x, LAG(N, x)), ABS(LAG(N, x)))` |  |
 | `FN_GM_CHG(N, a, b)` | `DIFF(N, MASK(GT(b, 0), RATIO(a, b)))` |  |
 | `CS_REL_RET(N, L, x)` | r＝`RET(N, x)`：`MASK(GT(GCOUNT(L, r), 1:COUNT), SUB(r, RATIO(GSUM(L, r), GCOUNT(L, r))))` |  |
-| `CS_RANK_MEAN(N, x)` | p＝`CS_PCT(x)`：`MASK(MUL(VALID(p), NOT(LT(MUL(2:COUNT, WSUM(N, VALID(p))), N:COUNT))), RATIO(WSUM(N, FILL(p, 0:RATIO)), WSUM(N, VALID(p))))` |  |
+| `CS_RANK_MEAN(N, x)` | p＝`CS_PCT(x)`：`MASK(AND(VALID(p), NOT(LT(MUL(2:COUNT, WSUM(N, VALID(p))), N:COUNT))), RATIO(WSUM(N, FILL(p, 0:RATIO)), WSUM(N, VALID(p))))` |  |
 | `RVOL(N, x)` | `ROLL_STD(N, LOGR(x, LAG(1, x)))` |  |
 | `SKEW(N, x)` | `WSKEW(N, LOGR(x, LAG(1, x)))` |  |
 | `KURT(N, x)` | `WKURT(N, LOGR(x, LAG(1, x)))` |  |
 | `ACORR(N, k, x)` | `WACORR(N, k, LOGR(x, LAG(1, x)))` |  |
 | `EV_DAYS_SINCE(N, b)` | s＝`SUB(SCANSUM(FILL(b, 0:BOOL), 1:DAYS), 1:DAYS)`：`MASK(NOT(GT(s, N:DAYS)), s)` |  |
-| `UP_STREAK(N, x)` | c＝`FILL(GT(x, LAG(1, x)), 0:BOOL)`：`MASK(MUL(VALID(x), VALID(LAG(N, VALID(x)))), MIN2(SCANSUM(NOT(c), MUL(c, 1:COUNT)), N:COUNT))` |  |
+| `UP_STREAK(N, x)` | c＝`FILL(GT(x, LAG(1, x)), 0:BOOL)`：`MASK(AND(VALID(x), VALID(LAG(N, VALID(x)))), MIN2(SCANSUM(NOT(c), MUL(c, 1:COUNT)), N:COUNT))` |  |
 | `DOWN_STREAK(N, x)` | 同 `UP_STREAK`，`GT` 換成 `LT` |  |
-| `EV_EARN_DRIFT(N, a, b)` | e＝`EV_CHANGE(b)`、base＝`LATCH(e, LAG(1, a))`、s＝`SUB(SCANSUM(e, 1:DAYS), 1:DAYS)`：`MASK(MUL(GT(base, 0), LT(s, N:DAYS)), RATIO(SUB(a, base), base))` |  |
+| `EV_EARN_DRIFT(N, a, b)` | e＝`EV_CHANGE(b)`、base＝`LATCH(e, LAG(1, a))`、s＝`SUB(SCANSUM(e, 1:DAYS), 1:DAYS)`：`MASK(AND(GT(base, 0), LT(s, N:DAYS)), RATIO(SUB(a, base), base))` |  |
 | `EV_IDX_CHG(N, b)` | e＝`EV_CHANGE(b)`、s＝`SUB(SCANSUM(e, 1:DAYS), 1:DAYS)`、m＝`RATIO(SUB(N:DAYS, s), N:DAYS)`：`MASK(VALID(WSUM(N+1, b)), FILL(MASK(LT(s, N:DAYS), FILL(MASK(b, m), MASK(NOT(b), NEG(m)))), 0:RATIO))` | b 只有 0／1 |
 | `CS_NEUTRAL_COUNTRY(a, b)` | `CS_NEUTRAL_IND(3, a, b)` |  |
 | `GWMEAN(L, w, x)` | `GWMEAN_BY(PARENT_ID(L), w, x)` |  |
@@ -775,10 +834,10 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 - 定義式裡的 `2*(N-1)`、`N-1`、`N+1`、`k/10` 是代入參數後的數字（例 `ROLL_RANK(60, x)` 的除數是 `118:COUNT`）。
 - 長式子前面的「s＝…」「c＝…」只是把重複的子式寫一次；展開後就是同一棵原子樹。
 - `RET`、`RET_SKIP`、`DIST_HIGH`、`DIST_LOW`、`FN_YOY` 的 N 可以寫到 1,260：N 超過 252 時，讀公式那一刻就照上表的定義式展開成原子（`LAG`、`ROLL_MAX`／`ROLL_MIN`、`LOGR` 本來就到 1,260），節點數照展開後算；N 不論多少都是同一個定義、同一個結果。
-- `FN_DY` 的除法用到第 3 章的單位規則：每股金額 ÷ 價 → 比值。保留函數另外檢查「第一個輸入要是每股值」，原子式不檢查。
+- `FN_DY` 的除法用到第 3 章的單位規則：每股值 ÷ 價（同單位）→ 比值。保留函數要推出比值，所以第一個輸入給總額會被擋；原子式的 `RATIO` 照第 3 章推（總額 ÷ 價得股數）。
 - 第 7.4 節的財報比值（資料）也各有一條逐位元相同的原子式，列在那一節。
 
-### 5.2 文字層展開的保留函數（35 個）
+### 5.2 文字層展開的保留函數（40 個）
 
 寫 `NAME` 或 `apx.NAME` 都收。展開成右邊的原子。
 
@@ -792,45 +851,51 @@ BOOL 常數只收 0、1（BOOL 只存成立／不成立）：`2:BOOL`、`FILL(c,
 | `TDAY_OF_MONTH()` | `SCANSUM(MDAY() < LAG(1, MDAY()), 1:COUNT)` | COUNT | 當月第幾個交易日（月初第一個交易日＝1）；面板第一個月不完整，那個月無效 | `TDAY_OF_MONTH() <= 5 ? CS_PCT(NEG(RET(5, close))) : CS_PCT(RET(20, close))` |
 | `AT_MONTH_START(x)` | `LATCH(MDAY() < LAG(1, MDAY()), x)` | 同 x | x 在當月第一個交易日的值，整個月沿用（那天 x 無效＝整個月無效） | `RATIO(AT_MONTH_START(LAG(1, close)), AT_MONTH_START(LAG(1, AT_MONTH_START(LAG(1, close))))) - 1` |
 | `LISTED_DAYS()` | `SCANSUM(DAY_INDEX() < 1, MUL(VALID(close), 1:COUNT))` | COUNT | 有收盤價以來的交易日數：面板第一天起累計、含當天；停牌那天不加、復牌不重置 | `SCANMAX(LISTED_DAYS() == 1 && VALID(close), FILL(close, 0:PRICE))` |
+| `MIN_PRICE(p)` | `raw.close >= p` | BOOL | 當天未還原收盤價（交易所原始價、當地幣別）≥ p，p 可帶小數；收盤無效那天＝不成立。美股選股範圍沒寫它時預設補 `MIN_PRICE(5)`（8.2）；要含仙股寫 `MIN_PRICE(0)`。面板要有 `raw.close` | `MIN_PRICE(10) && ROLL_MEAN(20, volume) > 200000` |
 | `LISTED_TDAYS()` | `SUB(cal.tday_idx, list.tday_idx)` | COUNT | 上市（櫃）以來的交易日數：從真的上市日算、含停牌日；上市那天＝0；2000-01-04 以前上市的從 2000-01-04 算；上市前無效。面板要有 `cal.tday_idx`、`list.tday_idx` 兩欄 | `MASK(LISTED_TDAYS() >= 500, RET(60, close))` |
 | `MKT_MEAN(x)` | `RATIO(GSUM_ALL(0, x), GCOUNT_ALL(0, x))` | 同 x | x 的全市場等權均值（往下取整），每檔同值。成員＝當天 x 有效的每一檔，不看選股範圍、不篩普通股；沒有一檔有效 → 無效 | `RET(20, close) - MKT_MEAN(RET(20, close))` |
-| `EW_INDEX(p)` | `EXP(SCANSUM(DAY_INDEX() < 1, FILL(LOG(1 + MKT_MEAN(MASK(common == 1, RATIO(p, LAG(1, p)) - 1))), 0)))` | RATIO | 等權大盤：普通股每天等權再平衡，面板第一天＝1，每檔同值；當天或前一天 p 無效的檔不進當天均值；p 寫 `close`。面板判斷不了普通股 → 錯誤 | `EW_INDEX(close) > ROLL_MEAN(250, EW_INDEX(close)) ? CS_PCT(RET(60, close)) : CS_PCT(NEG(RET(60, close)))` |
+| `EW_INDEX(p)` | `EXP(SCANSUM(DAY_INDEX() < 1, FILL(LOG(1 + MKT_MEAN(MASK(common == 1, RATIO(p, LAG(1, p)) - 1))), 0)))` | RATIO | 等權大盤：市場預設選股範圍（8.2：台股普通股；美股普通股且前一天收盤 5 美元以上，定義式的 `common == 1` 換成 `common == 1 && LAG(1, (apx.MIN_PRICE(5)))`）每天等權再平衡，面板第一天＝1，每檔同值；當天或前一天 p 無效的檔不進當天均值；p 寫 `close`。面板判斷不了普通股 → 錯誤 | `EW_INDEX(close) > ROLL_MEAN(250, EW_INDEX(close)) ? CS_PCT(RET(60, close)) : CS_PCT(NEG(RET(60, close)))` |
 | `STREAK(b)` | `SCANSUM(NOT(b), MUL(b, 1:COUNT))` | COUNT | b 連續為真的天數（今天為假＝0）；b 無效那天無效，之後要等到 b 為假才重新起算；序列開頭到第一次 b 為假之前無效 | `STREAK(foreign_net > 0) >= 3` |
 | `SINCE(b)` | `SCANSUM(b, 1:DAYS) - 1:DAYS` | DAYS | 距上次 b 為真的交易日數（為真那天＝0）；b 無效那天無效，之後要等到 b 再為真；第一次為真之前無效 | `SINCE(EV_CHANGE(revenue_m) && revenue_m >= ROLL_MAX(250, revenue_m)) <= 20` |
-| `STATE(on, off)` | `LATCH(on \|\| off, MUL(on, 1:COUNT)) > 0:COUNT` | BOOL | on 為真那天起為真、off 為真那天起為假，其他天沿用；同一天兩個都真＝真；on、off 任一無效那天沿用前一天；第一次 on 或 off 為真之前無效 | `STATE(close > ROLL_MEAN(250, close), close < ROLL_MEAN(60, close))` |
-| `GMEAN(first, x)` | `GMEAN_BY(first, x)`；x 是 COUNT：`GMEAN_BY(first, RATIO(x, 1:COUNT))` | 同 x | 同群成員 x 的平均（往下取整，和超出 i64 也有值），寫給每個成員；成員＝當天選股範圍內、x 有效（群鍵版另要群鍵有效）；first 同 GSUM：沒寫單位的整數＝層級（0 全市場），其餘＝群鍵；x 是 COUNT 時輸出 RATIO；非成員無效。`GMEAN(L, x)` 跟 `XL_PARENT(L, x)` 同一棵樹；x 是 COUNT 時兩者身分不同（單位本來就不同：`GMEAN` 出 RATIO、`XL_PARENT` 出 COUNT） | `GMEAN(CS_QCUT(10, fund.mktcap), RET(20, close))` |
-| `GDEMEAN(first, x)` | `MASK(GCOUNT(first, x) > 1:COUNT, x - GMEAN(first, x))` | 同 x | x 減同群平均（GMEAN）；群只有自己一檔 → 無效；非成員無效。x 要 1e6 定點的單位（PRICE、RATIO、MONEY…） | `GDEMEAN(CORR_GROUP(RATIO(close, LAG(1, close))), RET(20, close))` |
+| `SCANMEAN(r, x)` | `RATIO(SCANSUM(r, x), SCANSUM(r, 1:COUNT))`；x 是 COUNT：x 先換 `RATIO(x, 1:COUNT)`；x 是 BOOL：x 先換 `MUL(x, 1:RATIO)` | 同 x（COUNT、BOOL → RATIO） | r 上次為真那天（含）到今天 x 的平均（和 ÷ 天數，往下取整一次，同 `ROLL_MEAN`、`GMEAN` 的平均）；BOOL 的平均＝成立的比例。第一次 r 為真之前無效；r 或 x 一天無效 → 無效到 r 下一次為真；和超出 i64 → 無效到 r 下一次為真（`ROLL_MEAN` 的和是 128 位、不會因此無效）。進場以來的平均成本、創新高以來的平均量 | `close > SCANMEAN(close > ROLL_MAX(60, LAG(1, close)), close)` |
+| `STATE(on, off)` | `LATCH(on \|\| off, MUL(on, 1:COUNT)) > 0:COUNT` | BOOL | on 為真那天起為真、off 為真那天起為假，其他天沿用；同一天兩個都真＝真；有一個確定為真、on 無效那天起無效（到下一次確定的訊號）；有一個無效、另一個不成立那天沿用前一天；第一次 on 或 off 為真之前無效 | `STATE(close > ROLL_MEAN(250, close), close < ROLL_MEAN(60, close))` |
+| `GMEAN(first, x)` | `GMEAN_BY(first, x)`；x 是 COUNT：`GMEAN_BY(first, RATIO(x, 1:COUNT))`；x 是 BOOL：`GMEAN_BY(first, MUL(x, 1:RATIO))`（成立的比例） | 同 x | 同群成員 x 的平均（往下取整，和超出 i64 也有值），寫給範圍內同群每一檔；成員＝當天選股範圍內、x 有效（群鍵版另要群鍵有效）；first 同 GSUM：沒寫單位的整數＝層級（0 全市場），其餘＝群鍵；x 是 COUNT 或 BOOL 時輸出 RATIO；非成員無效。`GMEAN(L, x)` 跟 `XL_PARENT(L, x)` 同一棵樹；x 是 COUNT 時兩者身分不同（單位本來就不同：`GMEAN` 出 RATIO、`XL_PARENT` 出 COUNT） | `GMEAN(CS_QCUT(10, fund.mktcap), RET(20, close))` |
+| `GDEMEAN(first, x)` | `MASK(GCOUNT(first, x) > 1:COUNT, x - GMEAN(first, x))` | 同 x | x 減同群平均（GMEAN）；群只有自己一檔 → 無效；非成員無效。x 要 1e6 定點的單位（PRICE、RATIO、PCT、INDEX） | `GDEMEAN(CORR_GROUP(RATIO(close, LAG(1, close))), RET(20, close))` |
 | `GTOP(N, first, x)` | `ORD(first, x) < N` | BOOL | x 在同一群裡是前 N 大（精確名次：每群剛好 N 檔，群不到 N 檔就全部）；first 寫層級數字（0 全市場、1 產業…）或群鍵；同值照固定打散，跟選股名次同一套；非成員無效 | `MASK(GTOP(3, 1, fund.mktcap), RET(20, close))`（每個產業市值前 3 大） |
 | `GZ(first, x)` | `RATIO(SUB(x, GMEAN_BY(first, x)), GSTD(first, x))` | RATIO | x 在同一群裡的 Z 分數＝(x − 群內平均) ÷ 群內母體標準差；first 同 `GSTD`：沒寫單位的整數＝層級（`GZ(0, x)`＝`CS_Z(x)`、`GZ(L, x)`＝`CS_PEER_Z(L, x)`，逐位元相同），其餘＝群鍵；群不到 2 檔、標準差 0、x − 平均超出範圍 → 無效；非成員無效 | `GZ(CS_QCUT(10, fund.mktcap), RET(20, close))` |
 | `CS_TOPK(k, x)` | `ORD(0, x) < k` | BOOL | x 當天在選股範圍裡是前 k 大（剛好 k 檔）；同值照固定打散；x 無效或不在範圍 → 無效 | `MASK(CS_TOPK(50, fund.mktcap), RET(20, close))` |
-| `INV_VOL_KEY()` | `INV_VOL_KEY(20, RET(1, close))` | COUNT | 依波動倒數的權重鍵：近 20 日報酬波動的倒數（越穩越大）；`weighting="inv_vol"` 用的就是這個波動。換視窗或序列寫原子 `INV_VOL_KEY(N, x)`（4.6） | `MASK(CS_PCT(INV_VOL_KEY()) > 0.5, RET(20, close))` |
 | `MKT_SHARE(b)` | `MKT_MEAN(MASK(common == 1, MUL(b, 1:RATIO)))` | RATIO | 全市場普通股裡 b 為真的比例 0..1（往下取整到 1e-6），每檔同值；分母＝當天 b 有效的普通股，不看選股範圍；沒有一檔有效 → 無效；面板判斷不了普通股 → 錯誤 | `MKT_SHARE(close > ROLL_MEAN(60, close)) < 0.3 ? 0.5 : 1` |
 | `MKT_COUNT(b)` | `GSUM_ALL(0, MASK(common == 1, b))` | COUNT | 全市場普通股裡 b 為真的檔數，每檔同值；只數 b 有效的普通股，不看選股範圍；沒有一檔有效 → 無效；面板判斷不了普通股 → 錯誤 | `MKT_COUNT(raw.close >= raw.limit_up)` |
 | `BASKET_MEAN(sel, x)` | `MKT_MEAN(MASK(sel, x))` | 同 x | sel 為真那幾檔的 x 等權平均（往下取整），寫給每一檔；不看選股範圍；當天 sel 那幾檔的 x 都無效 → 無效 | `CORR(250, RET(1, close), BASKET_MEAN(symbol == "2330", RET(1, close)))` |
 | `CLIP(x, lo, hi)` | `MAX2(MIN2(x, hi), lo)` | 同 x | 把 x 夾在 lo..hi（lo > hi 時＝lo）；任一無效 → 無效；三個同單位 | `CLIP(RET(1, close), -0.1, 0.1)` |
-| `BETWEEN(x, lo, hi)` | `x >= lo && x <= hi` | BOOL | lo ≤ x ≤ hi（含兩端）；任一無效 → 無效；三個同單位 | `BETWEEN(CS_PCT(fund.mktcap), 0.3, 0.7)` |
+| `BETWEEN(x, lo, hi)` | `x >= lo && x <= hi` | BOOL | lo ≤ x ≤ hi（含兩端）；有一邊確定不成立 → 0，否則任一無效 → 無效；三個同單位 | `BETWEEN(CS_PCT(fund.mktcap), 0.3, 0.7)` |
 | `SIGN(x)` | `MUL(x > 0, 1:COUNT) - MUL(x < 0, 1:COUNT)` | COUNT | x 的正負號 −1／0／1；x 無效 → 無效 | `GSUM(0, SIGN(RET(1, close)))` |
-| `CROSS_UP(a, b)` | `a > b && !(LAG(1, a) > LAG(1, b))` | BOOL | a 由不高於 b 變成高於 b 的那天（今天 a > b、昨天 a ≤ b）；今天或昨天任一無效 → 無效；兩個同單位 | `CROSS_UP(close, ROLL_MEAN(20, close))` |
-| `CROSS_DOWN(a, b)` | `a < b && !(LAG(1, a) < LAG(1, b))` | BOOL | a 由不低於 b 變成低於 b 的那天（今天 a < b、昨天 a ≥ b）；今天或昨天任一無效 → 無效；兩個同單位 | `CROSS_DOWN(foreign_net, 0)` |
+| `CROSS_UP(a, b)` | `a > b && !(LAG(1, a) > LAG(1, b))` | BOOL | a 由不高於 b 變成高於 b 的那天（今天 a > b、昨天 a ≤ b）；今天確定沒在上面、或昨天確定已在上面 → 0，否則今天或昨天任一無效 → 無效；兩個同單位 | `CROSS_UP(close, ROLL_MEAN(20, close))` |
+| `CROSS_DOWN(a, b)` | `a < b && !(LAG(1, a) < LAG(1, b))` | BOOL | a 由不低於 b 變成低於 b 的那天（今天 a < b、昨天 a ≥ b）；今天確定沒在下面、或昨天確定已在下面 → 0，否則今天或昨天任一無效 → 無效；兩個同單位 | `CROSS_DOWN(foreign_net, 0)` |
 | `MONTH_START()` | `MDAY() < LAG(1, MDAY())` | BOOL | 當月第一個交易日＝1，其他天 0；面板第一天無效 | `MONTH_START()` |
-| `QUARTER_START()` | `MONTH_START() && (MONTH() - 1) % 3 == 0` | BOOL | 1、4、7、10 月第一個交易日＝1，其他天 0；面板第一天無效 | `QUARTER_START()` |
+| `QUARTER_START()` | `MONTH_START() && (MONTH() - 1) % 3 == 0` | BOOL | 1、4、7、10 月第一個交易日＝1，其他天 0；面板第一天：不是這四個月＝0，是的話無效 | `QUARTER_START()` |
 | `YEAR_START()` | `MONTH() < LAG(1, MONTH())` | BOOL | 每年第一個交易日＝1，其他天 0；面板第一天無效 | `YEAR_START()` |
 | `EVERY(n, k)` | `MOD(DAY_INDEX(), n) == k` | BOOL | 每 n 個交易日一次、錯開 k 天：面板第一天起算的第 d 天（0 起）d 除以 n 餘 k 那天＝1，其他天 0；每檔同值；n 1..1,260、k 0..n−1 | `EVERY(21, 5)` |
 | `PREV_MONTH_RET(p)` | `RATIO(AT_MONTH_START(LAG(1, p)), AT_MONTH_START(LAG(1, AT_MONTH_START(LAG(1, p))))) - 1` | RATIO | 上一個日曆月的報酬＝上月最後一個交易日的 p ÷ 前月最後一個交易日的 p − 1，整個月同值；那兩天任一個 p 無效（或分母 0）→ 整個月無效 | `CS_PCT(PREV_MONTH_RET(close))` |
 | `ROLL_MEAN_AVAIL(N, x)` | `RATIO(WSUM($N, FILL(x, 0)), WSUM($N, VALID(x)))` | 同 x | 近 N 天裡 x 有效那幾天的平均（往下取整；無效的天不算進分母）；面板前 N − 1 天無效；視窗內全無效 → 無效；N 1..1,260 | `ROLL_MEAN_AVAIL(20, foreign_net)` |
-| `VWAP(N)` | `RATIO(WSUM($N, px.turnover), WSUM($N, volume))` | MONEY | 近 N 天成交均價＝成交金額合計 ÷ 成交股數合計（元／股，原始價口徑：跟 raw.close 比）；視窗內任一格無效、股數合計 0、成交金額合計超出定點範圍 → 無效；N 1..1,260。面板要有 px.turnover、volume | `raw.close > VWAP(20)` |
+| `VWAP(N)` | `RATIO(WSUM($N, px.turnover), WSUM($N, volume))` | PRICE | 近 N 天成交均價＝成交金額合計 ÷ 成交股數合計（元／股，原始價口徑：跟 raw.close 比）；視窗內任一格無效、股數合計 0、成交金額合計超出定點範圍 → 無效；N 1..1,260。面板要有 px.turnover、volume | `raw.close > VWAP(20)` |
 | `REG_SLOPE(N, y, x)` | `WREG(N, 0, y, x)` | RATIO | y 對 x 近 N 日一元迴歸的斜率（x 動 1、y 平均動多少）；N 3..1,260，y、x 同單位；視窗內任一格無效或 x 沒變化 → 無效 | `REG_SLOPE(60, RET(1, close), MKT_MEAN(RET(1, close))) < 0.8` |
+| `BETA(N, y, x)` | `WREG(N, 0, y, x)` | RATIO | β＝cov(y, x) ÷ var(x)＝`REG_SLOPE(N, y, x)`（同一棵樹）；對大盤的 β 傳兩邊的報酬；N 3..1,260，y、x 同單位。要直接放兩個價（1.1.0 以前的 `BETA` 原子寫法，已退場），寫 `BETA(N, LOGR(a, LAG(1, a)), LOGR(b, LAG(1, b)))` | `BETA(120, RET(1, close), MKT_MEAN(RET(1, close))) < 0.8` |
 | `REG_INTERCEPT(N, y, x)` | `WREG(N, 1, y, x)` | 同 y | 截距（x 為 0 時 y 的平均）；其餘同 `REG_SLOPE` | `CS_PCT(REG_INTERCEPT(60, RET(1, close), MKT_MEAN(RET(1, close))))` |
 | `REG_RESID(N, y, x)` | `WREG(N, 2, y, x)` | 同 y | 今天的殘差（今天的 y 減迴歸線在今天 x 的值）；其餘同 `REG_SLOPE` | `CS_PCT(REG_RESID(60, RET(1, close), MKT_MEAN(RET(1, close))))` |
 | `REG_R2(N, y, x)` | `WREG(N, 3, y, x)` | RATIO 0..1 | R²（迴歸線解釋了多少 y 的變化）；其餘同 `REG_SLOPE` | `REG_R2(120, RET(1, close), MKT_MEAN(RET(1, close))) < 0.2` |
 | `REG_T(N, y, x)` | `WREG(N, 4, y, x)` | RATIO | 斜率的 t 值（斜率 ÷ 標準誤）；其餘同 `REG_SLOPE` | `REG_T(60, RET(1, close), MKT_MEAN(RET(1, close))) > 2` |
+| `RWIN_QUANT(k, q, x)` | `RWIN(k, 8, q, x)` | 同 x | 最近 k 期公布值由小到大第 ⌊q·(k−1)/100⌋ 個（q 50＝中位數、0＝最小、100＝最大）；k 1..12、q 0..100；一期＝x 的值變動的那天；不到 k 期或 x 無效 → 無效 | `eps > RWIN_QUANT(8, 50, eps)` |
+| `RWIN_RANK(k, x)` | `RWIN(k, 9, x)` | COUNT | 目前這一期在最近 k 期裡的名次＝2 ×（比它小的期數）＋（跟它相等的期數，含自己）− 1（數法同 `WRANK`）；k 2..12；其餘同 `RWIN_QUANT` | `RWIN_RANK(12, revenue) >= 22` |
+| `EWIN_QUANT(k, q, b, x)` | `EWIN(k, 8, q, b, x)` | 同 x | 最近 k 次事件（b 為真且 x 有效的日子）那幾天的 x 由小到大第 ⌊q·(k−1)/100⌋ 個；k 1..20、q 0..100；不到 k 次、當天 b 或 x 無效 → 無效 | `EWIN_QUANT(8, 50, EV_CHANGE(revenue_m), RET(1, close))` |
+| `EWIN_RANK(k, b, x)` | `EWIN(k, 9, b, x)` | COUNT | 最近一次事件那天的 x 在最近 k 次事件裡的名次（數法同 `RWIN_RANK`）；k 2..20；其餘同 `EWIN_QUANT` | `EWIN_RANK(8, EV_CHANGE(revenue_m), RET(1, close)) >= 14` |
 
 - 「月初」的判法：`MDAY() < LAG(1, MDAY())`（今天的日期數字比前一個交易日小）。前提是相鄰兩個交易日相差不到 28 個日曆日。
 - 上個日曆月的報酬＝`PREV_MONTH_RET(close)`；上市滿 2 年＝`LISTED_TDAYS() >= 500`；上市以來最高價＝`LISTED_DAYS` 那個例子。
-- `MKT_MEAN`、`EW_INDEX`、`MKT_SHARE`、`MKT_COUNT`、`BASKET_MEAN`、`MONTH_START`、`QUARTER_START`、`YEAR_START`、`EVERY` 的輸出每檔同值，可以直接放 `exposure`、`rebalance_when`（第 9 章）。`EVERY(n, k)` 從面板第一天起算、不看暖機；portfolio 的 `apx.EVERY(n)`（一個引數）仍是「暖機後每 n 天」＝`rebalance_days`。
+- `MKT_MEAN`、`EW_INDEX`、`MKT_SHARE`、`MKT_COUNT`、`BASKET_MEAN`、`MONTH_START`、`QUARTER_START`、`YEAR_START`、`EVERY` 的輸出每檔同值，可以直接放 `exposure`、`rebalance_when`（第 9 章）。`EVERY(n, k)` 從面板第一天起算、不看暖機；`apx.EVERY(n)`（一個引數）＝暖機後每 n 天＝`rebalance_days=n`（回測的 `rebalance_when`、檢驗的 `REBALANCE_WHEN` 都是這個意思）。
 - 輸入寫 X 的同一列是同一種量：沒寫單位的常數跟著有單位的那個（`CLIP(close, 10, 100)` 的 10、100 是 PRICE；跟原子同一條規則，見 2.3）。`GMEAN`、`GDEMEAN` 的第一個引數同 `GSUM`：沒寫單位的整數＝層級（0 全市場、1..4），其餘＝群鍵。輸入可以宣告成「X，COUNT 先換 RATIO」（目前 `GMEAN` 的 x）：給 COUNT 時先換成 `RATIO(x, 1:COUNT)` 再代入，展開式照實印出來。
 - `EW_INDEX` 實測（台股 4,127 日）：對雙精度參考最大相對誤差 6.07e-3、任意 250 日內 3.86e-4。
-- `SQRT` 收整數單位也是文字層展開：COUNT／DAYS 的 `SQRT(n)`＝`SQRT(RATIO(n, 1:同單位))`；AMOUNT 的 `SQRT(a)`＝`MUL(1000, SQRT(RATIO(a, 1000000:AMOUNT)))`（小數三位）。
+- `SQRT` 收整數單位也是文字層展開：QTY／COUNT／DAYS 的 `SQRT(n)`＝`SQRT(RATIO(n, 1:同單位))`；AMOUNT 的 `SQRT(a)`＝`MUL(1000, SQRT(RATIO(a, 1000000:AMOUNT)))`（小數三位）。
 
 ---
 
@@ -956,7 +1021,8 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 | `raw.` | 交易所原始價量與漲跌停價（未還原） | `raw.close`、`raw.limit_up`、`raw.limit_down`、`raw.ref_price` |
 | `px.` | 由價量算出的欄 | `px.turnover`（成交金額）、`px.turnover_rate`（週轉率） |
 | `fund.` | 財報細項與市值 | `fund.mktcap`、`fund.gross`、`fund.cfo`、`fund.debt` |
-| `idx.` | 市場層：指數，每檔同值 | `idx.taiex`、`idx.taiex_tr`、`idx.tpex`、`idx.tpex_tr` |
+| `mkt.` | 市場層通用名：這個市場的主指數，每檔同值 | `mkt.idx`（價格指數）、`mkt.idx_tr`（報酬指數，含息）；台股＝`idx.taiex`、`idx.taiex_tr`，美股＝`idx.spx`、`idx.spx_tr`（S&P 500） |
+| `idx.` | 市場層：指數，每檔同值 | 台股 `idx.taiex`、`idx.taiex_tr`、`idx.tpex`、`idx.tpex_tr`；美股 `idx.spx`、`idx.spx_tr` |
 | `etf.` | 市場層：ETF 收盤，每檔同值 | `etf.0050`、`etf.0050_adj` |
 | `list.` | 上市資訊 | `list.date`、`list.tday_idx` |
 | `cal.` | 日曆，每檔同值 | `cal.tday_idx` |
@@ -965,7 +1031,11 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 | `tdcc_` | 集保股權分散（週） | `tdcc_people`、`tdcc_big1000_pct` |
 | `dt_`、`sbl_` | 當沖、借券 | `dt_vol`、`sbl_vol` |
 
-另有不在面板上的四個代碼欄：`industry`、`market`、`common`、`symbol`（第 2.4 節）。
+另有不在面板上的代碼欄（一欄＝一套分類）：`industry`、`market`、`common`、`symbol`（第 2.4 節）。
+
+**只有台股的欄**（台灣交易所才有的資料）：法人買賣超（`foreign_net`、`trust_net`、`dealer_net`、`govbank_net`）、融資券與借券（`margin_*`、`short_bal`、`sbl_*`、`foreign_shares`、`foreign_ratio`、`unres_loan_bal`）、分點（`brk.*`、`top15_*`）、集保（`tdcc_*`）、當沖（`dt_*`）、月營收 `revenue_m`、重大訊息 `news.*`、漲跌停與平盤價（`raw.limit_up`、`raw.limit_down`、`raw.ref_price`）、交易所每日值（`per`、`pbr`、`div_yield`、`mkt_value`）、全額交割與處置注意（`full_delivery`、`disposition`、`attention`）、櫃買指數 `idx.tpex*`。每個市場實際有哪些欄用 `stock_formula_help topic=column market=<TW|US>` 查。
+
+算得出來的資料（不吃輸入的配方，定義只有一份）：`fund.mktcap` ＝ `MUL(raw.close, shares)`、`px.turnover` ＝ `MUL(raw.close, volume)`、`px.turnover_rate` ＝ `RATIO(volume, shares)`。照樣寫名字讀它：面板有這一欄就讀欄；沒有而配方用到的欄都在，就照配方算（跟直接寫配方同一棵樹、同一個值）；配方用到的欄也沒有，才回「面板沒有這一欄」並列出缺哪幾欄。查欄（`stock_formula_help topic=column name=…`）多回一行「怎麼來的」。
 
 ### 7.2 怎麼查有哪些欄
 
@@ -973,7 +1043,7 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 
 | 要查什麼 | 怎麼查 |
 |---|---|
-| 這張面板有哪些欄、單位 | `stock_formula_help topic=column`（可帶 `panel=`） |
+| 這張面板有哪些欄、單位 | `stock_formula_help topic=column`（可帶 `market=`、`panel=`） |
 | 用白話找欄 | `stock_formula_help topic=column query=<白話>`（例 `query=融資`） |
 | 一欄的定義、算法、公布規則 | `stock_formula_help topic=column name=<欄鍵>` |
 | 有哪些面板 | `stock_formula_help topic=column` |
@@ -989,14 +1059,14 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 | 欄的種類 | 哪一天起看得到 | 沒有新值的日子 |
 |---|---|---|
 | 價量（`close`、`volume`…） | 當天收盤後 | 沒有交易的日子（上市前、休市、停牌）無效 |
-| 季財報（`revenue`、`eps`、`fund.*`…） | 有實際申報日：申報日的下一個交易日；沒有申報日：法定期限（年報 3/31、Q1 5/15、Q2 8/14、Q3 11/14）的下一個交易日 | 沿用上一期，從公布日起最長 155 天，超過無效 |
+| 季財報（`revenue`、`eps`、`fund.*`…） | 有實際申報日：申報日的下一個交易日；沒有申報日：照這個市場的期限——台股法定期限（年報 3/31、Q1 5/15、Q2 8/14、Q3 11/14）的下一個交易日，美股季末後 60 天、年度結束後 90 天 | 沿用上一期，從公布日起最長 155 天，超過無效 |
 | 月營收 `revenue_m` | 照每筆的公布日換值（每月 10 日前公布） | 沿用到下一筆 |
-| 法人買賣超（`foreign_net`…） | 當天收盤後 | 不沿用；2020 年以前沒有進出的日子是缺值，之後是 0 |
-| 融資券（`margin_bal`…） | 當天收盤後 | 沿用上一筆；沒有信用交易資格的股票沒有值 |
+| 法人買賣超（`foreign_net`…） | 盤後公布：資料日的值在下一個交易日那列 | 不沿用；2020 年以前沒有進出的日子是缺值，之後是 0 |
+| 融資券（`margin_bal`…） | 盤後公布：資料日的值在下一個交易日那列 | 沿用上一筆；沒有信用交易資格的股票沒有值 |
 | 集保（`tdcc_*`） | 基準日的下一個交易日 | 沿用到下一期 |
 | 每股現金股利 `dps` | 除息日的下一個交易日 | 事件欄：只有那一天有值，其他天無效 |
 | 市場層（`idx.*`、`etf.*`） | 當天收盤後，每檔同值 | 休市日無效 |
-| 交易所原價（`raw.*`） | **晚一列**：面板第 t 天的 `raw.close` 是前一個交易日的收盤 | |
+| 交易所原價（`raw.*`） | 當天收盤後（跟 `close` 同一列）；漲跌停價、平盤參考價在適用的交易日那列 | 沒有成交的日子無效 |
 
 要點：
 
@@ -1008,25 +1078,25 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 
 ### 7.4 衍生資料：由資料欄相除得到的財報比值
 
-這 5 個是資料：由資料欄相除得到的財報比值，跟欄位一樣是資料。寫法照舊是呼叫（`FN_EP(每股盈餘, 股價)`），名字、參數、單位、結果都跟以前一樣；名詞清單裡標 `data`。
+這 5 個是資料：由資料欄相除得到的財報比值，跟欄位一樣是資料。寫法照舊是呼叫（`FN_EP(每股盈餘, 股價)`），名字、參數、結果都跟以前一樣（單位照第 3 章的量，見下表）；名詞清單裡標 `data`。
 
 | 簽名 | 參數 | 單位 | 無效與暖機 | 白話 | 例子 |
 |---|---|---|---|---|---|
-| `FN_EP(a, b)` | — | (MONEY, PRICE) → RATIO | b ≤ 0 → 無效；a 要是每股值 | 盈餘殖利率，本益比的倒數：4 × 每股盈餘 ÷ 價（季換年） | `FN_EP(eps, close)` |
-| `FN_BP(a, b)` | — | (MONEY, PRICE) → RATIO | a ≤ 0 或 b ≤ 0 → 無效；a 要是每股值 | 股價淨值比的倒數：每股淨值 ÷ 價 | `FN_BP(FN_PS(equity, shares), close)` |
-| `FN_PS(a, b)` | — | (MONEY, QTY) → MONEY | b ≤ 0 → 無效 | 每股值：總額 ÷ 股數 | `FN_BP(FN_PS(equity, shares), close)` |
-| `FN_ROE(a, b)` | — | (MONEY, MONEY) 或 (AMOUNT, AMOUNT) → RATIO | b ≤ 0 → 無效 | 股東權益報酬率：4 × 淨利 ÷ 權益（季換年） | `FN_ROE(net_income, equity)` |
-| `FN_ACCRUAL(N, a, b)` | N 1..252 | (MONEY, MONEY) → RATIO | b ≤ 0 → 無效；暖機 N | 應計比率：a＝應計、b＝資產，4 × a ÷ 今天與 N 日前資產的平均 | `NEG(FN_ACCRUAL(252, SUB(net_income, fund.cfo), assets))` |
+| `FN_EP(a, b)` | — | (PRICE, PRICE) → RATIO | b ≤ 0 → 無效；a 要是每股值 | 盈餘殖利率，本益比的倒數：4 × 每股盈餘 ÷ 價（季換年） | `FN_EP(eps, close)` |
+| `FN_BP(a, b)` | — | (PRICE, PRICE) → RATIO | a ≤ 0 或 b ≤ 0 → 無效；a 要是每股值 | 股價淨值比的倒數：每股淨值 ÷ 價 | `FN_BP(FN_PS(equity, shares), close)` |
+| `FN_PS(a, b)` | — | (AMOUNT, QTY) → PRICE | b ≤ 0 → 無效 | 每股值：總額 ÷ 股數 | `FN_BP(FN_PS(equity, shares), close)` |
+| `FN_ROE(a, b)` | — | (X, X) 同單位 → RATIO（淨利、權益是 AMOUNT） | b ≤ 0 → 無效 | 股東權益報酬率：4 × 淨利 ÷ 權益（季換年） | `FN_ROE(net_income, equity)` |
+| `FN_ACCRUAL(N, a, b)` | N 1..252 | (X, X) 同單位 → RATIO | b ≤ 0 → 無效；暖機 N | 應計比率：a＝應計、b＝資產，4 × a ÷ 今天與 N 日前資產的平均 | `NEG(FN_ACCRUAL(252, SUB(net_income, fund.cfo), assets))` |
 
-- 每股值與總額不能混：`FN_EP`、`FN_BP` 的第一個輸入要是每股值（`eps`、`FN_PS(…)`）；兩個金額輸入一個每股值、一個總額也會被擋。總額要比市值寫 `RATIO(總額, fund.mktcap)`。
-- 除法用到第 3 章的兩條單位規則：金額 ÷ 股數 → 每股金額（MONEY）、每股金額 ÷ 價 → 比值。
+- 每股值與總額是不同的量：`FN_EP`、`FN_BP` 要推出比值，第一個輸入要是每股值（`eps`、`FN_PS(…)`）；給總額（總額 ÷ 價＝股數）會被擋。總額要比市值寫 `RATIO(總額, fund.mktcap)`。
+- 除法照第 3 章的量算：金額 ÷ 股數 → 每股值（PRICE）、每股值 ÷ 價 → 比值。
 
-逐位元相同的原子式（值、有效位、單位；跟第 5 章同一套逐條驗證）。原子式不檢查「第一個輸入要是每股值」。`FN_ACCRUAL` 是熔成一次取整的統計量，沒有原子式。
+逐位元相同的原子式（值、有效位、單位；跟第 5 章同一套逐條驗證）。原子式的 `RATIO`、`MULDIV` 照第 3 章推，不要求推出比值。`FN_ACCRUAL` 是熔成一次取整的統計量，沒有原子式。
 
 | 名字 | 原子式 |
 |---|---|
 | `FN_EP(a, b)` | `MASK(GT(b, 0), MULDIV(4, a, b))` |
-| `FN_BP(a, b)` | `MASK(MUL(GT(a, 0), GT(b, 0)), RATIO(a, b))` |
+| `FN_BP(a, b)` | `MASK(AND(GT(a, 0), GT(b, 0)), RATIO(a, b))` |
 | `FN_PS(a, b)` | `MASK(GT(b, 0), RATIO(a, b))` |
 | `FN_ROE(a, b)` | `MASK(GT(b, 0), MULDIV(4, a, b))` |
 
@@ -1042,17 +1112,18 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 |---|---|
 | 過去 250 個交易日每天都有收盤價 | `WSUM(250, VALID(close)) >= 250` |
 | 上市滿兩年 | `cal.tday_idx - list.tday_idx >= 500`（或 `LISTED_TDAYS() >= 500`） |
-| 只看上櫃、排除上市不到 60 個交易日的 | `market == TWO && cal.tday_idx - list.tday_idx >= 60` |
+| 只看上櫃、排除上市不到 60 個交易日的（台股） | `market == TWO && cal.tday_idx - list.tday_idx >= 60` |
+| 只看那斯達克、紐約證交所（美股） | `market in {XNAS, XNYS}` |
 | 20 日均量超過 500 張、而且天天有成交 | `COUNT(20, volume > 0) >= 20 && ROLL_MEAN(20, volume) > 500000` |
 | 中型股：市值第 30～70 百分位 | `CS_PCT(fund.mktcap) >= 0.3 && CS_PCT(fund.mktcap) <= 0.7` |
 | 市值前 30%，但不要台積電、鴻海 | `CS_PCT(fund.mktcap) >= 0.7 && !(symbol in {"2330", "2317"})` |
 | 只在這幾檔裡挑 | `symbol in {"2330", "2454", "2317"}` |
-| 排除金融與營建 | `!(industry in {17, 14})` 或 `!cls.FIN() && !cls.REALTY()` |
+| 排除金融與營建 | `!cls.FIN() && !cls.REALTY()`（台股也能寫代碼 `!(industry in {17, 14})`） |
 | 近一年最大跌幅小於 40% | `WDROP(250, LOG(close)) < 0.5108` |
 | 剛站上年線（20 天內才站上） | `close > ROLL_MEAN(250, close) && COUNT(20, close > ROLL_MEAN(250, close)) < 20` |
-| 融資使用率低於 30%、券資比高於 10% | `RATIO(margin_bal, margin_limit) < 0.3 && RATIO(short_bal, margin_bal) > 0.1` |
-| 排除 60 天內收過漲停或跌停的 | `COUNT(60, raw.close >= raw.limit_up \|\| raw.close <= raw.limit_down) == 0` |
-| 排除全額交割、處置、注意股 | `!full_delivery && !disposition && !attention` |
+| 融資使用率低於 30%、券資比高於 10%（台股） | `RATIO(margin_bal, margin_limit) < 0.3 && RATIO(short_bal, margin_bal) > 0.1` |
+| 排除 60 天內收過漲停或跌停的（台股） | `COUNT(60, raw.close >= raw.limit_up \|\| raw.close <= raw.limit_down) == 0` |
+| 排除全額交割、處置、注意股（台股） | `!full_delivery && !disposition && !attention` |
 | 跟這幾檔表現相近的 | `GSUM(CORR_GROUP(RATIO(close, LAG(1, close))), symbol in {"2330", "2382", "3231"}) > 0` |
 | 股號尾數跟今天日期尾數相同 | `sym.code_num % 10 == MDAY() % 10` |
 
@@ -1061,45 +1132,48 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 - 算式無效的格（含視窗不滿、暖機期）不在範圍內。
 - 跨檔運算（`CS_PCT`、`GSUM`…）的成員＝**篩選前**的範圍，算一次、不迭代。`CS_PCT(fund.mktcap) >= 0.7` 是全市場的前 30%。
 - 一個結果庫綁一個選股範圍。換範圍就換庫。
-- 條件下平均每天不到 1 檔 → 錯誤 `E_EMPTY_UNIVERSE`。
+- 選股範圍每天都是 0 檔 → 錯誤 `E_EMPTY_UNIVERSE`。平均每天不到 1 檔（例如只看一檔、條件很嚴）照樣回測，0 檔那幾天不持股、放現金；結果跟分數寫成 `MASK(條件, 分數)` 相同。
 - 逐檔列代號最多 20 檔（整條條件合計）。超過就是在列一整類，改用類別名詞或種子籃子。
 - plan 回 `effective.universe_stats`：每日平均檔數、最後一天檔數、樣本代號。只想試算：`stock_formula_help topic=universe universe="…"`。
 
-### 8.2 預設＝全市場普通股
+### 8.2 預設＝全市場普通股（美股另排掉當天股價 5 美元以下）
 
-`universe` 不給＝全市場普通股。
+`universe` 不給＝全市場普通股；美股另加 `apx.MIN_PRICE(5)`（當天未還原收盤 5 美元以上）。
 
 - `common_only`（預設 true）：先排除確定不是普通股的（特別股、ETF、受益憑證、權證、存託憑證），再套 `universe`。要含 ETF 等：`common_only=false`。
 - 代碼欄 `common`：1＝普通股、0＝不是、無效＝判斷不了。
-- 客戶沒講的條件不加。流動性門檻、上市天數都不是預設。
+- 美股預設多一項 `apx.MIN_PRICE(5)`：系統接在普通股外框後面，plan 的 `effective.universe` 照實印出（`!FILL(common == 0, 0:BOOL) && apx.MIN_PRICE(5) && (客戶的條件)`）。客戶自己寫了 `MIN_PRICE`（`apx.MIN_PRICE(1)`、`apx.MIN_PRICE(0)` 不設下限都行）照客戶的、不再補；選股範圍只是指名股票（`symbol == …`、`symbol in {…}` 用 `||` 接起來）也不補。股價看每個換股日當天的收盤，不用未來的價格；資料照收，只是不選。台股與其他市場不補。
+- 除此之外，客戶沒講的條件不加。流動性門檻、上市天數都不是預設。
 
 ### 8.3 類別名詞
 
-官方名詞 `cls.NAME()`：一類股票，任何市場同一種寫法。定義＝這個市場原始分類欄的條件（台股是產業代碼）。只用在條件。
+官方名詞 `cls.NAME()`：一類股票，同一個名字在每個市場同一個意思；定義＝那個市場產業代碼的條件，**市場有產業代碼才有**（哪些市場有、各自的定義：`stock_formula_help topic=universe market=…`）。只用在條件。沒有對應的類別、或客戶講的是題材、「像某幾檔」：用種子籃子或相關性分群（第 6 章），每個市場都能用。
 
-| 名詞 | 意思 | 台股定義 |
-|---|---|---|
-| `cls.FIN()` | 金融 | `industry in {17}` |
-| `cls.SEMI()` | 半導體 | `industry in {24}` |
-| `cls.TECH()` | 科技、電子（含半導體） | `industry in {24, 25, 26, 28, 29, 30, 31, 36}` |
-| `cls.COMM()` | 通訊 | `industry in {27}` |
-| `cls.HEALTH()` | 醫療、生技 | `industry in {22}` |
-| `cls.STAPLES()` | 民生必需 | `industry in {2, 18, 33}` |
-| `cls.DISCR()` | 非必需消費 | `industry in {4, 11, 12, 16, 32, 37, 38}` |
-| `cls.INDU()` | 工業 | `industry in {5, 6, 15, 35}` |
-| `cls.MATER()` | 原物料 | `industry in {1, 3, 8, 9, 10, 21}` |
-| `cls.ENERGY()`、`cls.UTIL()` | 能源、公用事業（台股同一個定義） | `industry in {23}` |
-| `cls.REALTY()`、`cls.CONSTR()` | 不動產、營建 | `industry in {14}` |
-| `cls.SHIPPING()` | 航運 | `industry in {15}` |
-| `cls.STEEL()` | 鋼鐵 | `industry in {10}` |
-| `cls.PLASTIC()` | 塑膠 | `industry in {3}` |
-| `cls.ECOMP()` | 電子零組件 | `industry in {28}` |
-| `cls.PC()` | 電腦及週邊 | `industry in {25}` |
-| `cls.OPTO()` | 光電 | `industry in {26}` |
-| `cls.BIO()` | 生技 | `industry in {22}` |
-| `cls.GREEN()` | 綠能環保 | `industry in {35}` |
+| 名詞 | 意思 | 台股定義 | 美股定義 |
+|---|---|---|---|
+| `cls.FIN()` | 金融 | `industry in {17}` | `40` 開頭的子產業 |
+| `cls.SEMI()` | 半導體 | `industry in {24}` | `453010` 開頭的子產業 |
+| `cls.TECH()` | 科技、電子（含半導體） | `industry in {24, 25, 26, 28, 29, 30, 31, 36}` | `45` 開頭的子產業 |
+| `cls.COMM()` | 通訊 | `industry in {27}` | `50` 開頭的子產業 |
+| `cls.HEALTH()` | 醫療、生技 | `industry in {22}` | `35` 開頭的子產業 |
+| `cls.STAPLES()` | 民生必需 | `industry in {2, 18, 33}` | `30` 開頭的子產業 |
+| `cls.DISCR()` | 非必需消費 | `industry in {4, 11, 12, 16, 32, 37, 38}` | `25` 開頭的子產業 |
+| `cls.INDU()` | 工業 | `industry in {5, 6, 15, 35}` | `20` 開頭的子產業 |
+| `cls.MATER()` | 原物料 | `industry in {1, 3, 8, 9, 10, 21}` | `15` 開頭的子產業 |
+| `cls.ENERGY()`、`cls.UTIL()` | 能源、公用事業（台股同一個定義） | `industry in {23}` | ENERGY：`10` 開頭；UTIL：`55` 開頭（美股分開） |
+| `cls.REALTY()`、`cls.CONSTR()` | 不動產、營建 | `industry in {14}` | REALTY：`60` 開頭的子產業；CONSTR 台股才有 |
+| `cls.SHIPPING()` | 航運 | `industry in {15}` | —（台股才有） |
+| `cls.STEEL()` | 鋼鐵 | `industry in {10}` | —（台股才有） |
+| `cls.PLASTIC()` | 塑膠 | `industry in {3}` | —（台股才有） |
+| `cls.ECOMP()` | 電子零組件 | `industry in {28}` | —（台股才有） |
+| `cls.PC()` | 電腦及週邊 | `industry in {25}` | —（台股才有） |
+| `cls.OPTO()` | 光電 | `industry in {26}` | —（台股才有） |
+| `cls.BIO()` | 生技 | `industry in {22}` | —（台股才有） |
+| `cls.GREEN()` | 綠能環保 | `industry in {35}` | —（台股才有） |
 
 - 排除寫 `!cls.FIN()`；只看寫 `cls.SEMI()`。類別可以重疊（`TECH` 含 `SEMI`）。
+- 美股的產業代碼是 GICS 子產業 8 碼（例 `45301020` 半導體）；美股有前 12 個跨市場共用的類別，台股才有的（航運、鋼鐵…）寫在美股會回「這是台股才有的類別」。美股沒有子產業的檔（多半是已下市的、ETF）不屬於任何類別；產業值是空的，`cls.X()` 與 `!cls.X()` 都不成立（兩邊都不含它們）。
+- 沒有產業的股票，類別條件兩邊都不收；要留下它們就寫 `FILL(!cls.FIN(), 1:BOOL)`（不含金融、沒有產業的也留下）。
 - 類別名詞帶版本，策略存檔記下用的版本；定義改了，重跑才會變。
 - 客戶講的是題材或「像某幾檔」、沒有對應的類別：用種子籃子（第 6.2 節）。
 
@@ -1131,7 +1205,7 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 
 - 每個比較、邏輯都包成「無效當假」（`FILL(…, 0:BOOL)`），重現舊寫法「跟缺值比較一律為假」。
 - `mean(x)` ＝ `RATIO(GSUM(0, x), GCOUNT(0, x))`；`quantile(x, q)` ＝ `GQUANT(q × 100, 0, x)`，q × 100 要是 0 到 100 的整數；`sum`、`count`、單引數的 `min`、`max` ＝ 層級 0 的 `GSUM`、`GCOUNT`、`GMIN`、`GMAX`。
-- **跨單位的算術先換成比例再算**（例 `eps * 4 * shares / equity`、`close * volume`）：舊寫法沒有單位，照欄的單位直翻過不了單位規則時，數值欄先換成 `RATIO(欄, 1:<該欄單位>)` 再算。
+- **跨單位的算術先換成比例再算**（例 `eps * 4 * shares / equity`、`close / volume`）：舊寫法沒有單位，照欄的單位直翻過不了單位規則時，數值欄先換成 `RATIO(欄, 1:<該欄單位>)` 再算。
 - **比較兩邊最外層的除法會移項**（`x / y > z`）：改成乘法再比，不在比較前取整——分母 > 0 比 `x` 與 `z·y`，分母 < 0 大小反過來，分母 0 當假。兩邊都是除法就各自移項。內層的除法照 VQL 向下取整到 1e-6。
 - **界線**：比例是 1e-6 的定點。跨單位算術裡的值（含移項乘出來的積）超過約 9.2e12 的那一格無效、條件當假；總額欄（例 `fund.mktcap`）進了這種算術最容易碰到。
 - 翻不成的回 `E_OLD_SYNTAX`，hint 給 VQL 的寫法：`sd`、`var`（樣本版；VQL 的 `GSTD` 是母體）、`pow`、百分位不是整數的 `quantile`、除以常數 0。
@@ -1153,13 +1227,13 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 | 參數 | 值域 | 預設 | 意思 | 例子 |
 |---|---|---|---|---|
 | `rebalance_days` | 1..252 | 不指定：試 5 與 21，挑一組 | 每 N 個交易日全部重排換股 | `{"rebalance_days":5}` |
-| `max_positions` | 1..500 | 不指定：試 20 與 50，挑一組 | 最多持有幾檔 | `{"max_positions":10}` |
+| `max_positions` | 1..500 | 不指定：試 5 與 10，挑一組 | 最多持有幾檔 | `{"max_positions":10}` |
 | `weighting` | `equal`／`score`／`inv_vol` | `equal` | 等權／依排名（越前越重）／依波動倒數（越穩越重） | `{"weighting":"inv_vol","max_weight":15}` |
 | `max_weight` | 0..100（%） | 0（不限） | 單檔上限；超過的部分放現金 | `{"max_positions":10,"max_weight":15}` |
 | `hold_days` | 2..60 | 不用 | 每天選、每天買進的那一份持有 N 個交易日到期賣出（N 份錯開） | `{"hold_days":20}` |
 | `hold` | BOOL 算式 | 不用 | 逐日逐檔的條件：排名照全體，不合的不買、到換股日賣 | `{"hold":"close > ROLL_MEAN(60, close)"}` |
 | `rebalance_when` | BOOL 算式（每天全市場同值） | 不用 | 成立那天換股 | `{"rebalance_when":"MDAY() < LAG(1, MDAY())"}` |
-| `exposure` | RATIO 算式 0～1（每天全市場同值） | 1（滿倉） | 總曝險，其餘放現金 | `{"exposure":"idx.taiex < ROLL_MEAN(200, idx.taiex) ? 0.5:RATIO : 1:RATIO"}` |
+| `exposure` | RATIO 算式 0～1（每天全市場同值） | 1（滿倉） | 總曝險，其餘放現金 | `{"exposure":"mkt.idx < ROLL_MEAN(200, mkt.idx) ? 0.5:RATIO : 1:RATIO"}` |
 | `weight` | 數值算式（逐日逐檔） | 不用 | 換股日每檔的權重照這個值的比例 | `{"max_positions":20,"weight":"fund.mktcap"}` |
 | `tie_by` | 數值算式（逐日逐檔） | 不用（同分照固定的打散順序） | 挑前 N 檔時分數相同的照這個值排，大的先選；沒有值的排在同分的最後；值也相同才照 `mix64((entity_id<<32)^日)`、最後檔號。只決定同分的先後，不改分數與權重、不抬高暖機；要小的先寫 `NEG(…)` | `{"tie_by":"fund.mktcap"}` |
 | `group_by` | 算式（逐日逐檔；數值或條件，不能用 `pos.*`） | 不用 | 分群的依據：同一天值相同的股票算同一群；跟 `group_cap` 一起給（9.5a） | `{"group_by":"CORR_GROUP(RET(1, close))","group_cap":3}` |
@@ -1181,14 +1255,14 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 | `reentry_days` | 0..10,000 | 0 | 照 `exit_when` 出場後幾個交易日內的換股不買回同一檔 | `{"exit_when":"pos.ret <= -0.08","reentry_days":20}` |
 | `exit_below` | PRICE 算式，可用 `pos.entry`、`pos.peak` | 不用 | 盤中停損價位：當天最低價碰到就賣，不等收盤（9.6a） | `{"exit_below":"pos.entry * 0.92"}` |
 | `exit_above` | PRICE 算式，可用 `pos.entry`、`pos.peak` | 不用 | 盤中停利價位：當天最高價碰到就賣（9.6a） | `{"exit_above":"pos.entry * 1.2"}` |
-| `lock` | `limit`／`none` | 不給：面板有交易所漲跌停價就判 | 規則出場遇漲跌停鎖死：`limit` 賣不掉順延到下一個交易日、`none` 不模擬（9.6a） | `{"exit_below":"pos.entry * 0.92","lock":"none"}` |
+| `lock` | `limit`／`none` | 不給：面板有交易所漲跌停價就判（美股沒有漲跌幅限制，plan 回 `no_limits`） | 規則出場遇漲跌停鎖死：`limit` 賣不掉順延到下一個交易日、`none` 不模擬（9.6a） | `{"exit_below":"pos.entry * 0.92","lock":"none"}` |
 | `grid` | 物件：名字 → 要試的值 | 不用 | 要試的數字：算式裡寫成 `$名字`，這裡給每個名字的值（9.11）；也用來改搜尋的基本格：`pl`（做多門檻）、`reb`（換股天數）、`n`（檔數）、`wk`（權重鍵）（9.11a） | `{"exit_when":"pos.drawdown >= $dd","grid":{"dd":[0.06,0.1,0.14]}}`、`{"grid":{"reb":[5,10,21]}}` |
-| 做多門檻 `apx.IN_TOP(p)` | 寫在 `hold`；p 是 0..200 的整數或 `$名字` | 不寫：試 160／170／180／190 | 只買分數名次百分位 ≥ p／200 的股票（180＝前 10%、190＝前 5%）；＝ `GE(CS_PCT(apx.SCORE()), p / 200)` | `{"hold":"apx.IN_TOP(190)"}`、`{"hold":"apx.IN_TOP($pl)","grid":{"pl":[150,170,190]}}` |
+| 做多門檻 `apx.IN_TOP(p)` | 寫在 `hold`；p 是 0..200 的整數或 `$名字` | 不寫：試 160／170／180／190；寫了就照寫的、不再補 | 只買分數名次百分位 ≥ p／200 的股票（180＝前 10%、190＝前 5%）；範圍裡排第一的那檔一定過，選股範圍只有一檔時就買它；`apx.IN_TOP(0)`＝不設門檻；＝ `GE(q, p / 200)`，q ＝ `FILL(CS_PCT(apx.SCORE()), MASK(EQ(GCOUNT(0, apx.SCORE()), 1:COUNT), 1:RATIO))` | `{"hold":"apx.IN_TOP(190)"}`、`{"hold":"apx.IN_TOP($pl)","grid":{"pl":[150,170,190]}}` |
 | `grid_by` | 篩選語言的式子（排序算式，11.3） | 有 `grid`：`apx.SHARPE`；沒有：合成分數 | 同一個公式的各組照它排（大的優先）；沒有 `grid` 時排各組投組參數 | `{"exit_when":"pos.drawdown >= $dd","grid":{"dd":[0.06,0.1,0.14]},"grid_by":"apx.CALMAR"}` |
-| `initial_capital` | 1..1e12（元） | 1,000,000 | 初始資金；帶了就算逐股帳戶 | `{"initial_capital":4000000}` |
-| `lot` | `odd`／`board` | `odd` | 零股（1 股）／只買整張（1,000 股） | `{"lot":"board"}` |
-| `min_fee` | 0..10,000（元） | 20 | 每筆最低手續費 | `{"min_fee":20}` |
-| `contribution` | 0..1e12（元／期） | 0 | 定期投入，下一次換股時買進 | `{"initial_capital":5000,"contribution":5000,"contribution_every":"month","lot":"odd"}` |
+| `initial_capital` | 1..1e12（本幣：台股新台幣、美股美元；`min_fee`、`contribution` 同） | 1,000,000 | 初始資金；帶了就算逐股帳戶 | `{"initial_capital":4000000}` |
+| `lot` | `odd`／`board` | `odd` | 零股（1 股）／只買整張（台股 1,000 股） | `{"lot":"board"}` |
+| `min_fee` | 0..10,000（本幣） | 20 | 每筆最低手續費（台股券商的最低 20 元；美股零佣金寫 0） | `{"min_fee":20}` |
+| `contribution` | 0..1e12（本幣／期） | 0 | 定期投入，下一次換股時買進 | `{"initial_capital":5000,"contribution":5000,"contribution_every":"month","lot":"odd"}` |
 | `contribution_every` | `month`／`rebalance` | `month` | 每月第一個交易日／每次換股 | 同上 |
 
 互斥與併用：
@@ -1226,6 +1300,14 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 
 `hold_days` 與時間停損不同：`hold_days=20` 是「每天買一份、分 20 份輪流」的另一種換股方式；「照常換股、持有滿 20 天的那檔先賣」是 `exit_when="pos.days >= 20"`。
 
+「同時最多 N 檔、每檔抱 M 天」（手上最多 N 檔，每檔買進後抱滿 M 天就賣，空出的名額照排名補）也不是 `hold_days`：`hold_days=M` 配 `max_positions=N` 是每天各買一份 N 檔，同時最多 N × M 檔、每份 1/M 的錢。要的是每天看一次、未滿 M 天的續抱、滿 M 天賣：
+
+| 白話 | 寫法 |
+|---|---|
+| 手上最多 8 檔，每檔抱滿 15 天就換 | `{"rebalance_days":1,"max_positions":8,"keep_when":"pos.days < 15","exit_when":"pos.days >= 15"}` |
+
+`keep_when` 讓買進未滿 15 天的檔在每天換股時先留下（不管名次掉到哪），`exit_when` 在第 15 個收盤後的下一個成交時點賣出，空出的名額隔天照排名補。掉出選股範圍、分數無效或不合 `hold` 的檔照樣提早賣（9.5）。
+
 ### 9.4 `hold`、`exposure`、`weight`
 
 **`hold`**（逐日逐檔 BOOL）：排名、因子指標仍照原來的選股範圍算；這支策略只買、只持有條件為真的股票。無效的格當不合。
@@ -1238,12 +1320,12 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 
 | 白話 | 寫法 |
 |---|---|
-| 加權指數跌破 200 日均線只投入五成 | `idx.taiex < ROLL_MEAN(200, idx.taiex) ? 0.5:RATIO : 1:RATIO` |
+| 大盤（台股加權指數、美股 S&P 500）跌破 200 日均線只投入五成 | `mkt.idx < ROLL_MEAN(200, mkt.idx) ? 0.5:RATIO : 1:RATIO` |
 | 等權大盤跌破年線降到五成 | `EW_INDEX(close) < ROLL_MEAN(250, EW_INDEX(close)) ? 0.5 : 1` |
 | 等權大盤從一年高點回落超過 15% 只持有三成 | `RATIO(EW_INDEX(close), ROLL_MAX(250, EW_INDEX(close))) < 0.85 ? 0.3 : 1` |
 | 全市場單日平均跌超過 2% 降到三成 | `MKT_MEAN(RATIO(close, LAG(1, close)) - 1) < -0.02 ? 0.3 : 1` |
 | 每月 13 號剛好是星期五就出清 | `MDAY() == 13 && WEEKDAY() == 4 ? 0:RATIO : 1:RATIO` |
-| 依全市場 20 日波動反比調整，最多滿倉 | `MIN2(RATIO(0.01:RATIO, ROLL_STD(20, FILL(RATIO(GSUM(0, LOGR(close, LAG(1, close))), GSUM(0, MASK(VALID(LOGR(close, LAG(1, close))), 1:RATIO))), 0:RATIO))), 1:RATIO)` |
+| 依全市場 20 日波動反比調整，最多滿倉 | `MIN2(RATIO(0.01:RATIO, ROLL_STD(20, FILL(MKT_MEAN(LOGR(close, LAG(1, close))), 0:RATIO))), 1:RATIO)` |
 
 **`weight`**（逐日逐檔的數值）：
 
@@ -1261,7 +1343,7 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 | 依分數 | `CS_PCT(RET(60, close))` |
 | 跟 2330 相關越高買越多 | `CORR_SEED({"2330"}, RATIO(close, LAG(1, close)))` |
 
-價 × 量（`MUL(close, volume)`）單位不合；成交金額直接用欄 `px.turnover`。
+價 × 量（`close * volume`）是 AMOUNT，也能當權重；`px.turnover` 是當天實際成交金額。
 
 **`weighting`**（不寫 `weight` 時）：
 
@@ -1269,7 +1351,7 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 |---|---|
 | `equal` | 每檔 1 ÷ 檔數；有 `max_weight` 而且檔數 × 上限不到 100% 時，每檔＝上限，其餘現金 |
 | `score` | 依排名：越前越重；權重以萬分之一為單位取整，餘數給排名最高的那檔 |
-| `inv_vol` | 依波動倒數：越穩越重；波動是 0 的檔不進候選。波動＝`INV_VOL_KEY(20, RET(1, close))` 那一個（近 20 日報酬，4.6）；要換視窗或序列，權重鍵直接寫 `INV_VOL_KEY(N, x)` |
+| `inv_vol` | 依波動倒數：越穩越重。就是權重鍵 `INV_VOL_KEY(20, RET(1, close))`（近 20 日報酬，4.6），規則跟 `weight` 算式同一套：沒有值（近 20 日有效報酬不到一半）的檔不買；比例不到萬分之一的檔也不買，那一份留現金。要換視窗或序列，權重鍵直接寫 `INV_VOL_KEY(N, x)` |
 
 ### 9.5 出場：`exit_when`、`keep_when`、`reentry_days`
 
@@ -1284,22 +1366,23 @@ CORR_SEED({種子…}[, lookback[, every[, step[, quant[, how]]]]], <算式>)
 | `pos.rank` | COUNT | 今天在候選裡排第幾名（1＝最前） | 只有 `keep_when` |
 | `pos.held` | BOOL | 恆真 | 兩者 |
 
-寫法規則：
+加減碼的四個葉 `pos.avg_ret`、`pos.size`、`pos.adds`、`pos.cuts`（9.5b）兩者也都能用；沒加過碼時 `pos.avg_ret` ＝ `pos.ret`。
 
-| 規則 | 說明 |
+寫法規則只有一條：**持股規則就是一般的條件算式，葉子多了上面這幾個 `pos.*`。** 跟常數、市場的欄與算式一樣用逐格的運算組合——四則、`%`、比較（含 `==`、`!=`）、`&&`、`||`、`!`、`? :`、`ABS`、`SQRT`、`LOG`、`EXP`、`FLOOR`、`ROUND`、`MIN2`、`MAX2`、`FILL`、`MASK` 這類只看同一天、同一檔那一格的函數都收，單位規則照第 3 章。持股狀態只在持有期間、只有手上那幾檔才有，所以有兩處跟一般算式不同：
+
+| 不同的地方 | 說明 |
 |---|---|
-| `pos.*` 要放在比較裡 | `>`、`>=`、`<`、`<=`（或 `GT`、`LT`） |
-| 比較的一邊是狀態葉的一次式 | 可以乘常數、加減常數；係數絕對值 ≤ 100 |
-| 另一邊是常數，或整條只看市場的算式 | 例 `-2 * ROLL_STD(20, RET(1, close))` |
-| 幾個比較用 `&&`、`\|\|`、`!` 連起來 | 相同的比較只算一個 |
-| 不含 `pos.*` 的子條件 | 整棵當一個市場條件，照一般條件編（例 `close < ROLL_MEAN(20, close)`） |
+| 要看別天或別檔的函數 | `ROLL_*`、`EMA`、`LAG(2 以上)`（看別天）、`CS_*`、`G*`（看同一天別的股票）這類只吃只看市場的那一段；持股狀態昨天的值寫 `LAG(1, …)`（例 `pos.ret < LAG(1, pos.ret) - 0.03`、`ABS(pos.ret - LAG(1, pos.ret)) > 0.05`） |
+| `pos.rank` | 換股日的名次：只在 `keep_when`，單獨跟整數比（例 `pos.rank <= 30`、`pos.rank == 3`），其他條件用 `&&`、`\|\|` 接在旁邊 |
+
+例：`pos.ret == pos.peak_ret`（今天收在持有以來最高）、`pos.ret * close <= -2 * ROLL_MEAN(14, high - low)`（跌掉的價差超過 2 倍平均振幅）、`pos.ret > 0 ? close < ROLL_MEAN(20, close) : pos.days >= 60`（賺錢的跌破均線才賣、賠錢的抱滿 60 天才賣）。
 
 行為：
 
 - **`exit_when`**：持有中的每一檔每天收盤看一次；成立就在下一個成交時點賣出，不等換股日。賣出的那一份留現金到下一個換股日，其他檔的權重不動。
 - **`keep_when`**：換股日，持有中而且條件成立的檔先留下，剩下的名額才照排名補。不合 `hold` 或不在選股範圍的檔照樣賣。
 - **`reentry_days`**：照 `exit_when` 出場後 N 個交易日內的換股不買回同一檔。0＝只擋出場當天的換股。
-- 有比較讀到無效的格時，這條規則對那一檔不成立。
+- 規則裡有算不出來的格（例 `ROLL_STD(20, …)` 的前 20 天、停牌那天、市場條件沒有值）：`&&`、`||`、`!` 照三值算——假 且 不知道＝假、真 或 不知道＝真，其餘遇到不知道就是不知道；最後不知道＝不成立（不出場、不續抱、不加減碼）。所以 `pos.ret <= -0.1 || pos.ret >= 2 * ROLL_STD(200, RET(1, close))` 前 200 天停損照樣出場；`!(pos.ret > 0 && 市場條件)` 在市場條件不知道、而 `pos.ret > 0` 時不成立。`weight` 的 `? :` 條件不知道＝這一檔那天的倍數不改（剛進場照 `size_init`）。
 - 報告的 `summary.rule_exits_by_rule` 是每一條（用 `||` 接的每一段）各出場幾檔次。
 - 出場規則是整次搜尋的設定：隨機生成、指定公式、自訂函數格點三種來源的每一支策略都照做。
 
@@ -1326,9 +1409,9 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 
 ### 9.5b 加減碼與帳戶層
 
-**加減碼**：`add_when`／`cut_when` 是條件從不成立變成成立的那個收盤觸發一次（一路成立只做一次），在下一個成交時點加碼或減碼；之後條件回頭不還原。另一種寫法是讓 `weight` 讀 `pos.*`（例 `"weight": "fund.mktcap * (pos.peak_ret >= 0.1 ? 2 : 1)"`），照狀態定目標權重；兩種擇一。
+**加減碼**：`add_when`／`cut_when` 是條件從不成立變成成立的那個收盤觸發一次（一路成立只做一次），在下一個成交時點加碼或減碼；之後條件回頭不還原。另一種寫法是讓 `weight` 讀 `pos.*`（例 `"weight": "fund.mktcap * (pos.peak_ret >= 0.1 ? 2 : 1)"`），照狀態定目標權重；兩種擇一。目標倍數以目標權重的 1% 為一格（跟 `size_init`、`add_size` 同一個格點）：寫死的倍數要是 0.01 的倍數、在 0.01～40.95 之間（`pos.ret > 0 ? 0.005 : 1` 編不過）；算出來的倍數（例 `1 + pos.ret`）往下取到 0.01，超過 `max_size` 照 `max_size`；算出來不到 0.01（含 0 與負數）這一版當成 0.01，要賣掉那一檔寫 `exit_when`。
 
-新葉（只在 `add_when`、`cut_when` 與出場規則裡用）：`pos.size`（現在的部位 ÷ 進場那一份）、`pos.adds`、`pos.cuts`（加碼、減碼成交次數）、`pos.avg_ret`（對加碼後均價的報酬）；盤中觸價的價位另可用 `pos.avg`（均價，沒加過碼＝進場價），例 `"exit_below": "pos.avg * 0.92"`。
+新葉（只在 `add_when`、`cut_when`、`exit_when`、`keep_when` 裡用）：`pos.size`（現在的部位 ÷ 進場那一份）、`pos.adds`、`pos.cuts`（加碼、減碼成交次數）、`pos.avg_ret`（對加碼後均價的報酬）；盤中觸價的價位另可用 `pos.avg`（均價，沒加過碼＝進場價），例 `"exit_below": "pos.avg * 0.92"`。
 
 **帳戶層**：`gross_max`（總部位上限，> 1＝融資）、`cash_min`（現金下限）、`add_mode`（加碼超過上限時只用剩下的額度或縮其他持股）、`max_new`（一個換股日最多新買幾檔）、`cash_rate`／`margin_rate`（現金與融資利率）。
 
@@ -1399,14 +1482,16 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 項 | 預設 | 說明 |
 |---|---|---|
 | 成交時點 | 換股日收盤後選股，**隔天開盤**成交 | 決策日 t 照 t 的排名選股；t+1 的隔夜報酬（開盤 ÷ 前收 − 1）歸舊持股，換股後 t+1 的盤中報酬（收盤 ÷ 開盤 − 1）歸新持股。某格沒有開盤價時那一檔照前一天收盤成交 |
-| 買進成本 | 手續費 0.1425% | |
-| 賣出成本 | 手續費 0.1425% ＋ 證交稅 0.3% | ETF 的證交稅 0.1% |
-| 最低手續費 | 每筆 20 元（`min_fee`） | 只在逐股帳戶裡算 |
+| 買進成本 | 台股：手續費 0.1425%；美股：0（零佣金） | |
+| 賣出成本 | 台股：手續費 0.1425% ＋ 證交稅 0.3%；美股：SEC 規費（按金額） | 台股 ETF 的證交稅 0.1% |
+| 最低手續費 | 每筆 20（`min_fee`，本幣） | 只在逐股帳戶裡算 |
 | 換手上限 | 不限 | `apx.PICK` 第四個引數（9.12；`0.3`＝新買的檔數最多是持有檔數的三成），或 `config` 的 `max_turnover_bp`（`3000`＝同一件事） |
 
-- 成本與交易規則照面板所屬的市場表（台股是上面的值；其他市場用那個市場的）。
+- 成本與交易規則照這檔股票所屬市場的成本表自動套（`market/costs/tw.json`、`us.json`），算式裡不用寫。
+- 持有中的股票某天沒有價格（停牌、下市）：那天報酬記 0、照樣持有，到下一個換股日（`hold_days` 是那一份到期）照最後的價格出場。
 - 可用 `stock_backtest` 的 `config` 覆寫：`fee_bp_x100`（單位 0.01 基點，預設 1425）、`tax_sell_bp_x100`（預設 3000）、`tax_sell_etf_bp_x100`（預設 1000）；`cost_bp` ≥ 0＝舊制，買賣各 N 基點、不另計稅。
-- 策略的權益是加法累計（不複利）；報告的年化、最大跌幅用複利口徑（第 11 章）。
+- 期內買進持有：兩次換股之間每檔買進持有、權重照漲跌漂移；只有換股日與加減碼成交的日子才回到目標權重。曝險變動、規則出場、觸價出場不動其餘持股的權重（出場那一檔的價值留著當現金）。跟逐股帳戶同一個定義。
+- 策略的權益是每天報酬的加總（每天的報酬照上一條算）；報告的年化、最大跌幅用複利口徑（第 11 章）。
 - 決策日落在面板最後一天的那次換股不做（隔天還沒到）。
 
 ### 9.8 選股、名次與同分
@@ -1430,7 +1515,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 每月定期投入 5,000 元 | `{"initial_capital":5000,"contribution":5000,"contribution_every":"month","lot":"odd"}` |
 | 每 5 個交易日換一次、最多 10 檔、400 萬 | `{"rebalance_days":5,"max_positions":10,"initial_capital":4000000}` |
 
-每筆手續費＝max(`min_fee`, ⌊成交金額 × 0.1425%⌋)。
+每筆手續費＝max(`min_fee`, ⌊成交金額 × 手續費率⌋)（台股 0.1425%、美股 0）。
 
 ### 9.10 回測期間
 
@@ -1458,14 +1543,14 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 
 - 值的給法：陣列 `[0.05, 0.08, 0.1]`，或 `{"from": 0.04, "to": 0.1, "step": 0.02}`。同一個 `$名字` 可以出現多次。
 - 上限：基本格組數 × 門檻組數 ≤ 32,767（試驗帳本的格數）；超過回錯，減少值的個數或分幾次搜尋。
-- 值不能改變條件要看的天數：均線天數這類視窗長度不收，要分開搜尋。
+- 值也可以是條件要看的天數，例 `{"exit_when":"close < ROLL_MEAN($n, close)","grid":{"n":[20,60]}}`：各組都從暖機最長那一組的起算日開始算。
 - 每一組都跑。同公式、同投組參數的各組比 `grid_by`（排序算式，預設 `apx.SHARPE`；11.3），留一組；它用的那組寫在報告的 `program.exit_when`，各組的數字在工作摘要的 `exit_grid`。
 - 每一組算一次多重檢定的試驗（10.3）。
 - 只要「在原值附近找」就把門檻包起來：`{"exit_when":"pos.ret <= -apx.EVOLVE(0.08)"}` ＝ `{"exit_when":"pos.ret <= -$evolve1","grid":{"evolve1":[0.04,0.06,0.07,0.08,0.09,0.1,0.12,0.16]}}`（原值 × 1/2…2，同 10.1）；`apx.PICK(apx.EVOLVE(10), false)`、`apx.EVERY(apx.EVOLVE(21))` 這類整數照天數格點。只收包一個數字；包了算子的參數（要看幾天，例 `ROLL_MEAN(apx.EVOLVE(20), close)`）回 `E_EVOLVE_WINDOW`，改法給 `$名字`＋`grid` 的寫法。
 
 ### 9.11a 搜尋的基本格：`pl`、`reb`、`n`、`wk`
 
-搜尋時每一棵樹都試一組「基本格」：做多門檻 × 換股天數 × 檔數（× 權重鍵）。沒寫時試做多門檻 160／170／180／190、換股 5／21 天、檔數 20／50（16 組）。每一軸都是投組算式裡的一個 `$名字`，值寫在同一份 `grid`；只給 `grid` 不寫算式也行。
+搜尋時每一棵樹都試一組「基本格」：做多門檻 × 換股天數 × 檔數（× 權重鍵）。沒寫時試做多門檻 160／170／180／190、換股 5／21 天、檔數 5／10（16 組）。每一軸都是投組算式裡的一個 `$名字`，值寫在同一份 `grid`；只給 `grid` 不寫算式也行。
 
 | 白話 | `portfolio` | 基本格 |
 |---|---|---|
@@ -1473,13 +1558,14 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 只買排名前 10%（做多門檻 180） | `{"hold":"apx.IN_TOP(180)"}` | 1 × 2 × 2 ＝ 4 |
 | 前 25%～前 2.5% 都試 | `{"hold":"apx.IN_TOP($pl)","grid":{"pl":[150,160,170,180,190,195]}}` | 6 × 2 × 2 ＝ 24 |
 | 持股 10、20、30 檔 | `{"weight":"apx.SHARE(apx.PICK($n, false), 1)","grid":{"n":[10,20,30]}}` | 4 × 2 × 3 ＝ 24 |
-| 等權與依波動倒數都試 | `{"weight":"apx.SHARE(apx.PICK(20, false), $wk == 0 ? 1 : apx.INV_VOL_KEY())","grid":{"wk":[0,1]}}` | 4 × 2 × 1 × 2 ＝ 16 |
+| 等權與依波動倒數都試 | `{"weight":"apx.SHARE(apx.PICK(20, false), $wk == 0 ? 1 : INV_VOL_KEY(20, RET(1, close)))","grid":{"wk":[0,1]}}` | 4 × 2 × 1 × 2 ＝ 16 |
 | 依名次加權、門檻跟著試 | `{"hold":"apx.IN_TOP($pl)","weight":"apx.SHARE(apx.PICK(20, false), apx.RANK_KEY($pl))","grid":{"pl":[170,190]}}` | 2 × 2 × 1 ＝ 4 |
 
-- 四個位置：`hold` 的 `apx.IN_TOP($pl)`、`rebalance_when` 的 `apx.EVERY($reb)`、`apx.PICK($n, …)` 的檔數、權重鍵 `$wk == 0 ? 1 : apx.INV_VOL_KEY()`。名字可以自己取；只給 `grid` 時用 `pl`、`reb`、`n`、`wk`。
+- 四個位置：`hold` 的 `apx.IN_TOP($pl)`、`rebalance_when` 的 `apx.EVERY($reb)`、`apx.PICK($n, …)` 的檔數、權重鍵 `$wk == 0 ? 1 : INV_VOL_KEY(20, RET(1, close))`。名字可以自己取；只給 `grid` 時用 `pl`、`reb`、`n`、`wk`。
 - 只給一個值＝直接寫那個數字（`{"grid":{"reb":[10]}}` 跟 `{"rebalance_days":10}` 是同一件事、同一個結果庫）。
 - 這幾個 `$名字` 只寫在上面的位置；出場條件等別處要試的數字另取名字。那一軸已經寫了具體值（例 `rebalance_days`）時，`grid` 不要再給同一軸。
-- `apx.RANK_KEY(p)`（依名次的權重鍵，＝ `FLOOR(CS_PCT(apx.SCORE()) * 200) - p + 1`）的 p 跟 `apx.IN_TOP(p)` 同一個；不寫引數＝跟著做多門檻。
+- `apx.RANK_KEY(p)`（依名次的權重鍵，＝ `FLOOR(q * 200) - p + 1`，q 同 `apx.IN_TOP`）的 p 跟 `apx.IN_TOP(p)` 同一個；不寫引數＝跟著做多門檻。
+- 寫了哪一軸就照寫的：`hold` 寫了 `apx.IN_TOP(p)` 就不再補預設門檻；只給 `grid` 的 `pl`／`reb`／`n`／`wk` 就換掉那一軸的預設值，例 `{"grid":{"pl":[0]}}`＝不設門檻。
 - `apx.IN_TOP`、`apx.RANK_KEY` 讀這支策略自己的分數，只寫在 `portfolio`；分數公式裡要名次百分位寫 `CS_PCT(x)`。
 - 每一組基本格算一次多重檢定的試驗（10.3）；plan 的 `effective.portfolio` 列出各軸試的值（`rebalance_days`、`max_positions`、`in_top`）。
 
@@ -1495,7 +1581,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 參數 | 算式 |
 |---|---|
 | `max_positions=10` | `weight="apx.SHARE(apx.PICK(10, false), 1)"`（`1`＝等權） |
-| `weighting="score"`／`"inv_vol"` | 權重鍵寫 `apx.RANK_KEY()`／`apx.INV_VOL_KEY()` |
+| `weighting="score"`／`"inv_vol"` | 權重鍵寫 `apx.RANK_KEY()`／`INV_VOL_KEY(20, RET(1, close))` |
 | `weight="SQRT(fund.mktcap)"` | `apx.SHARE(apx.PICK(10, false), SQRT(fund.mktcap))` |
 | `max_weight=15` | `apx.CAP(0.15, apx.SHARE(…))` |
 | `keep_when="pos.rank <= 30"` | `apx.PICK(10, FILL(pos.rank <= 30, false))` |
@@ -1554,7 +1640,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
   - 包一段算式（例 `apx.EVOLVE(CS_PCT(fund.roe))`）回 `APX_UNSUPPORTED`；選股範圍裡不收（`APX_UNSUPPORTED`：選股範圍的門檻用 `$名字`＋`grid` 分開試）。投組規則裡的門檻見 9.11。
 - 同一棵樹（展開後相同）只算一次。
 
-每棵樹另外試一組投組設定（基本格 16 組：換股天數 5／21、最多持股 20／50），`screen_pick` 從中挑一組。`rebalance_days`、`max_positions` 指定了，那一軸就固定成指定值。
+每棵樹另外試一組投組設定（基本格 16 組：換股天數 5／21、最多持股 5／10），`screen_pick` 從中挑一組。`rebalance_days`、`max_positions` 指定了，那一軸就固定成指定值。
 
 ### 10.2 入庫門檻
 
@@ -1563,7 +1649,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 來源 | 沒寫的門檻 |
 |---|---|
 | 隨機生成 | 套預設值 |
-| 指定公式（`formulas`）、自訂函數格點（`nouns`） | 不套：每支照算、照記，不替使用者篩 |
+| 指定公式（`formulas`）、自訂函數格點（`nouns`） | 不套：每支照算、照記，不替使用者篩（只有整次回測一天都沒持股的不入庫，任何來源都一樣） |
 | 明寫的門檻（`screen`、`screen_pick`、`screen_gate`、`screen_admit`、`config`） | 任何來源都照套 |
 
 隨機生成的預設值：跨檔分數 ≥ 2,000 bp、時間分數 ≥ 2,500 bp、不重疊度 ≥ 5,000 bp、全期淨報酬 > 0、IC > 0、IC 的 t 值 ≥ 4（`config` 的 `min_ic_t`）。
@@ -1590,7 +1676,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 
 同一套運算子與優先序（另有 `%`），值是實數（double）。名字是**策略層的原子**：一支策略（一棵樹配一組投組設定）跑完之後的數字與逐日序列。
 
-- 純量與序列可以混算（純量廣播）。除以 0＝缺值（`nan`）；跟缺值比較一律為假。
+- 純量與序列可以混算（純量廣播）。除以 0＝缺值（`nan`）；跟缺值比較＝不知道，`&&`、`||` 只在答案已經確定時給答案（假 && 不知道＝假、真 || 不知道＝真），門檻算出不知道＝不過。序列一律照日子對齊。
 - 條件式的結果要是一個純量。
 
 **序列原子**（逐日，從暖機後第一天起）：
@@ -1628,9 +1714,9 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 類 | 函式 |
 |---|---|
 | 逐格 | `ABS` `SQRT` `LOG` `EXP` `FLOOR`（往負無限大捨去到整數）`POW(x, y)` `MIN2(x, y)` `MAX2(x, y)` `WHERE(cond, a, b)` `HAS(x)` |
-| 縮減（序列 → 純量） | `SUM` `MEAN` `SD` `VAR`（樣本，n − 1）`COUNT`（元素數）`FIRST` `LAST` `MIN(x)` `MAX(x)`（略過缺值；`AMIN`／`AMAX` 同義）`QUANTILE(x, q)` `STREAK(x)`（最長連續為真）`LEN` |
+| 縮減（序列 → 純量） | `SUM` `MEAN` `SD` `VAR`（樣本，n − 1）`COUNT`（元素數）`FIRST` `LAST` `MIN(x)` `MAX(x)`（`AMIN`／`AMAX` 同義）`QUANTILE(x, q)` `STREAK(x)`（最長連續為真）`LEN`；集合裡有一格是缺值，結果就是缺值（只算有值的寫 `FILTER(x, HAS(x))`），`COUNT`、`LEN` 只數格數、跟值無關 |
 | 序列 → 序列 | `CUM` `PEAK` `DRAWDOWN`（加法權益的回落）`NAV`（複利淨值）`DRAWDOWN_NAV`（複利回落）`DIFF` `FILTER(x, cond)` |
-| 視窗（參數在前） | `ROLL_SUM(n, x)` `ROLL_MEAN(n, x)` `ROLL_STD(n, x)` `ROLL_MIN(n, x)` `ROLL_MAX(n, x)`（只算完整視窗，長度 N − n + 1）、`SKIP(k, x)`（去掉前 k 格）、`LAG(k, x)`（往回位移 k 格，前 k 格缺值，長度不變） |
+| 視窗（參數在前） | `ROLL_SUM(n, x)` `ROLL_MEAN(n, x)` `ROLL_STD(n, x)` `ROLL_MIN(n, x)` `ROLL_MAX(n, x)`（只算完整視窗：前 n − 1 天不在集合裡）、`SKIP(k, x)`（前 k 天不在集合裡）、`LAG(k, x)`（往回位移 k 天，前 k 天不在集合裡）；`DIFF` 第一天不在集合裡 |
 | 分組 | `BY_SUM(key, x)` `BY_MEAN` `BY_SD` `BY_MIN` `BY_MAX` `BY_COUNT` `BY_PROD1`（複利）`BY_KEY(key)` |
 | 日子 | `RANK_DESC(x)`（逐日由大到小的名次，1 起；平手取日子在前的；缺值不佔名次）、`BOOT(seed, block)`（區塊重抽樣的每日次數：日子切成長 block 的區塊、有放回抽 ⌈天數 ÷ block⌉ 次，每天的值＝它那一塊被抽到幾次；日子順序不變。種子＝seed、這一輪的 `val_alt_seed` 與面板，重算逐位相同） |
 | 常數 | `nan` |
@@ -1674,7 +1760,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | `apx.RET_Y_MAX` | `max(apx.YEARLY_RET)` | 最佳曆年 |
 | `apx.ANN_VOL` | `apx.VOL_OF(r)` | 年化波動 |
 | `apx.DOWN_VOL` | `sqrt(mean(pow(min(r, 0), 2))) * sqrt(252)` | 年化下行波動 |
-| `apx.MAX_DD` | `apx.MAX_DD_OF(r)` | 最大跌幅（收盤、複利；同報告） |
+| `apx.MAX_DD` | 報告的最大回撤 | 最大回撤（跟報告的最大回撤同一個數） |
 | `apx.MAX_DD_ADD` | `apx.MAX_DD_ADD_OF(r)` | 最大跌幅（加法；同 `max_dd_1e6`） |
 | `apx.MAX_DD_DAYS` | `streak(drawdown_nav(r) > 0)` | 最長水下期（交易日） |
 | `apx.ULCER` | `sqrt(mean(pow(drawdown_nav(r), 2)))` | Ulcer 指數 |
@@ -1685,9 +1771,9 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | `apx.WORST_DAY` | `min(r)` | 最差單日 |
 | `apx.BEST_DAY` | `max(r)` | 最佳單日 |
 | `apx.SHARPE` | `apx.SHARPE_OF(r)` | 年化 Sharpe |
-| `apx.SORTINO` | `apx.ANN_RET / apx.DOWN_VOL` | Sortino |
+| `apx.SORTINO` | `mean(r) / sqrt(mean(pow(min(r, 0), 2))) * sqrt(252)` | 索提諾值（同報告） |
 | `apx.CALMAR` | `apx.ANN_RET / apx.MAX_DD` | Calmar |
-| `apx.ROMAD` | `apx.TOTAL_RET / apx.MAX_DD` | 全期淨報酬 ÷ 最大跌幅 |
+| `apx.ROMAD` | `apx.TOTAL_RET / apx.MAX_DD` | 全期淨報酬 ÷ 最大回撤 |
 | `apx.OMEGA` | `sum(max(r, 0)) / sum(max(-r, 0))` | Omega（門檻 0） |
 | `apx.IR` | `apx.SHARPE_OF(r - m)` | 對同範圍等權平均的資訊比率 |
 | `apx.TE` | `apx.VOL_OF(r - m)` | 年化追蹤誤差 |
@@ -1724,11 +1810,13 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | `apx.IR_B` | `apx.SHARPE_OF(r - b)` | 對大盤基準的資訊比率 |
 | `apx.BETA_B` | `apx.BETA_OF(r, b)` | 對大盤基準的 β |
 | `apx.YEARS_BEAT_B` | `MEAN(BY_PROD1(year, r) > BY_PROD1(year, b))` | 曆年報酬贏大盤基準的年數比例 |
+| `apx.B_ANN` | `apx.ANN_OF(b)` | 同期大盤基準的年化報酬（含息；跟策略同一段日子） |
+| `apx.BEAT_B_ANN` | `apx.ANN_RET - apx.B_ANN` | 策略年化 − 同期大盤年化（成本已扣；> 0 ＝ 贏大盤；不同於 `apx.EXCESS_B_ANN` 的逐日超額複利） |
 | `apx.ROLL_SHARPE_MIN` | `MIN(ROLL_MEAN(252, r) / ROLL_STD(252, r)) * SQRT(252)` | 滾動一年年化 Sharpe 的最小值 |
 | `apx.ROLL_RET_MIN` | `MIN(EXP(ROLL_SUM(252, LOG(1 + r)))) - 1` | 滾動一年報酬（複利）的最小值：任一年持有期最差 |
 | `apx.TOTAL` | `FLOOR((3 * cs_bp + 2 * ts_bp + 3 * novel_bp + 2 * short_bp) / 10)` | 合成分數（bp）：沒寫 `grid_by` 時各組照它排；`total_bp` 就是它的值 |
 
-`m`（同範圍等權平均）與 `b`（大盤指數）是兩把不同的尺：`apx.IR`、`apx.BETA`、`apx.EXCESS_ANN` 對 `m`，`*_B` 對 `b`。
+`m`（同範圍等權平均）與 `b`（大盤指數）是兩把不同的尺：`apx.IR`、`apx.BETA`、`apx.EXCESS_ANN` 對 `m`，`*_B` 對 `b`。跟任何一把尺比贏不贏，都是同一條：`apx.ANN_RET - apx.ANN_OF(尺) > 0`（`apx.BEAT_B_ANN` 就是尺＝`b` 的那一份）。
 
 ### 11.3 一條門檻、一條排序
 
@@ -1740,6 +1828,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 |---|---|
 | 月勝率至少六成 | `screen_gate="apx.MONTH_WIN >= 0.6"` |
 | 每一年都要贏同範圍等權平均 | `screen_gate="MIN(BY_SUM(year, r - m)) > 0"` |
+| 全期年化贏同期含息大盤 | `screen_gate="apx.BEAT_B_ANN > 0"` |
 | 七成以上的年份贏大盤指數 | `screen_gate="apx.YEARS_BEAT_B >= 0.7"` |
 | 對大盤的年化超額報酬至少 5% | `screen_gate="apx.EXCESS_B_ANN >= 0.05"` |
 | 任一年持有都不虧超過 15% | `screen_gate="apx.ROLL_RET_MIN > -0.15"` |
@@ -1792,7 +1881,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | run 的 `with`：`SHUFFLE()`、`SHUFFLE(k, 群鍵)` | 每天的報酬在股票之間打亂（帶群鍵：只在同一群裡打亂） |
 | run 的 `with`：`SCORE(算式)` | 換分數，`score` 代表候選原本的分數（例 `SCORE(ROLL_MEAN(5, score))`）；新分數在這次重跑的範圍裡排名 |
 | run 的 `with`：`ENTRY_DELAY(n)`、`ENTRY_DELAY_ASOF(n)` | 進場晚 n 天（＝`SCORE(LAG(n, score))`；`_ASOF` 名次照 n 天前那天的範圍＝`SCORE(LAG(n, CS_PCT(score)))`） |
-| run 的 `with`：`REBALANCE_WHEN(條件)`、`PHASE(n, k)` | 換股日改成條件成立那天（同回測的 `rebalance_when`）；`PHASE(n, k)`＝`REBALANCE_WHEN(EVERY(n, k))`，每 n 天、錯開 k 天 |
+| run 的 `with`：`REBALANCE_WHEN(條件)`、`PHASE(n, k)` | 換股日改成條件成立那天（同回測的 `rebalance_when`）；`REBALANCE_WHEN(apx.EVERY(n))`＝暖機後每 n 天（＝舊欄 `rebalance_days`）；`PHASE(n, k)`＝`REBALANCE_WHEN(EVERY(n, k))`，每 n 天、錯開 k 天 |
 | run 的 `with`：`DAYS(權重)`、`DROP_TOP_DAYS(k)`、`DROP_BOTTOM_DAYS(k)`、`ONLY_DAYS(條件)`、`BOOTSTRAP(seed, block)` | 哪些日子算數：部位不變，收成指標時每一天乘權重（拿掉最好／最差幾天、只看某些日子、日子重抽樣） |
 | run 的 `with`：`DROP_TOP_HELD(run, k)`、`DROP_BOTTOM_HELD(run, k)`、`DROP_MOST_HELD(run, k)` | 拿掉前一次重跑裡賺最多／賠最多／抱最久的 k 檔再重跑（＝範圍條件 `!CS_TOPK(k, HELD_RET(run))`…）；範圍條件裡也能直接用 `HELD_RET(run)`、`HELD_DAYS(run)` |
 | run 的 `with`：`RETUNE(f)`、`RETUNE_AT(i, f)` | 公式的天數全部（或只有第 i 個）×f／100 重算，天數改一點還穩嗎；`prog.n_windows`＝天數的個數 |
@@ -1843,7 +1932,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 欄位 | 意思 |
 |---|---|
 | `runs` | 幾次重跑、每次換哪些東西（沒寫的＝原版）；最多 8 次 |
-| `outputs` | 從各次重跑的指標算出幾個整數；最多 16 個。就是「檢驗後的篩選指標」，門檻 `screen_gate` 用 `check.<NAME>.<輸出名>` 讀 |
+| `outputs` | 從各次重跑的指標算出幾個數（整數或比值）；最多 16 個。就是「檢驗後的篩選指標」，門檻 `screen_gate` 用 `check.<NAME>.<輸出名>` 讀 |
 | `pass` | 對 `outputs`（與 `$參數`、`env.*`）的條件式 |
 | `params` | 參數：`{"name","default","min","max"}`，算式裡寫 `$名字` |
 
@@ -1852,8 +1941,8 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 鍵 | 值 | 意思 |
 |---|---|---|
 | `with` | 逗號分隔的變換清單，一項一個變換（下表） | 換選股範圍、報酬、分數、換股日、日子、投組設定、區間都寫在這裡；沒寫＝原版 |
-| `vary` | `{"k": [1, 2, 3]}` 或 `{"k": {"from": 1, "to": "$mult"}}` | 同一次重跑展成幾組（一個變數、1..16 個值）；`with` 裡寫 `RUN.k` 取值。變數名是舊投組欄名（`p_long`、`rebalance_days`…）時值直接套進去 |
-| 舊欄 | `interval`（`full`、`window.is`、`window.oos`、`window.seg`、`{"begin","end"}`）、`cost_bp`、`p_long`、`p_short`、`rebalance_days`、`weight_mode`、`max_positions`、`max_weight_bp`、`max_turnover_bp`；定義檔頂層的 `windows` | 照收，是 `with` 寫法的別名：`window.is`／`window.oos`＝`ROLLING_IS`／`ROLLING_OOS(is, oos, win)`、`window.seg`＝`SPLIT(n, win)`、`{"begin","end"}`＝`PERIOD(begin, end)`、`"cost_bp":"prog.cost_bp * 3"`＝`COST(cost * 3)`、`"p_long":"170"`＝`HOLD(hold && apx.IN_TOP(170))`…（同一份定義） |
+| `vary` | `{"k": [1, 2, 3]}` 或 `{"k": {"from": 1, "to": "$mult"}}` | 同一次重跑展成幾組（可寫幾個變數，每種組合各一組；成員數＝視窗段數 × 各變數的值數，最多 4,096，超過回錯。每個不同的變換還佔一輪的一格，格數見本節「一輪裡不同的…最多幾種」那條；只變投組參數（`COST`、投組欄名）不佔格，才跑得到 4,096）；`with` 裡寫 `RUN.k` 取值。變數名是舊投組欄名（`p_long`、`rebalance_days`…）時值直接套進去 |
+| 舊欄 | `interval`（`full`、`window.is`、`window.oos`、`window.seg`、`{"begin","end"}`）、`cost_bp`、`p_long`、`p_short`、`rebalance_days`、`weight_mode`、`max_positions`、`max_weight_bp`、`max_turnover_bp`；定義檔頂層的 `windows` | 照收，是 `with` 寫法的別名：`window.is`／`window.oos`＝`ROLLING_IS`／`ROLLING_OOS(is, oos, win)`、`window.seg`＝`SPLIT(n, win)`、`{"begin","end"}`＝`PERIOD(begin, end)`、`"cost_bp":"prog.cost_bp * 3"`＝`COST(cost * 3)`、`"p_long":"170"`＝`HOLD(hold && apx.IN_TOP(170))`、`"rebalance_days":"21"`＝`REBALANCE_WHEN(apx.EVERY(21))`…（同一份定義） |
 
 `with` 的每一項（括號裡的逗號不算分隔）：
 
@@ -1870,9 +1959,9 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | `SCORE(算式)` | 分數 | `score` 代表候選原本的分數（逐日逐檔）；算出來的新分數在這次重跑的範圍裡排名、照同一條路選股。文法同分數公式（大寫、定點）。`SCORE(score)`＝不換 |
 | `ENTRY_DELAY(n)` | 分數 | 進場晚 n 天：n 天前的分數、在今天的範圍排名。等於 `SCORE(LAG(n, score))` |
 | `ENTRY_DELAY_ASOF(n)` | 分數 | 進場晚 n 天、名次照 n 天前那天的範圍。等於 `SCORE(LAG(n, CS_PCT(score)))` |
-| `REBALANCE_WHEN(條件)` | 換股日 | 換股日改成條件成立那天。條件要每天全市場同值（月初、`EVERY(n, k)`、大盤條件…），跟回測寫 `rebalance_when` 同一條規則、同一份數字；曝險照原本的 |
+| `REBALANCE_WHEN(條件)` | 換股日 | 換股日改成條件成立那天。條件要每天全市場同值（月初、`EVERY(n, k)`、大盤條件…），跟回測寫 `rebalance_when` 同一條規則、同一份數字；曝險照原本的。`REBALANCE_WHEN(apx.EVERY(n))`＝暖機後每 n 天，跟舊欄 `rebalance_days=n` 同一份數字（n 可寫 `$參數`、`RUN.變數`） |
 | `PHASE(n, k)` | 換股日 | 每 n 天換一次、錯開 k 天。等於 `REBALANCE_WHEN(EVERY(n, k))`（`EVERY` 從面板第一天 0 起算） |
-| `DAYS(權重)` | 日子 | 每一天算幾次（收淨報酬、IC、價差）：權重是 11.1 篩選語言（小寫那門、實數）對**這次重跑自己**的逐日序列 `r`、`m`、`year`、`month`、`regime`、`half`、`day`、`b` 算的式子；0 或缺值＝不算、1＝算一次、2＝算兩次（取整，上限 32）；BOOL 當 0／1。部位與持股照原樣跑，只改收成 |
+| `DAYS(權重)` | 日子 | 每一天算幾次（收淨報酬、IC、價差）：權重是 11.1 篩選語言（小寫那門、實數）對**這次重跑自己**的逐日序列 `r`、`m`、`year`、`month`、`regime`、`half`、`day`、`b` 算的式子；0＝不算、1＝算一次、2＝算兩次（取整，上限 32）；BOOL 當 0／1；暖機或 `FILTER` 篩掉的日子不算。權重算不出來（不知道）的那一天，算不算、算幾次不知道，所以重收的欄是無效：淨報酬有一天不知道就無效，IC 與價差那幾欄有一個換股日不知道就無效；要只算有權重的日子寫 `FILTER(w, HAS(w))`。部位與持股照原樣跑，只改收成 |
 | `DROP_TOP_DAYS(k)` | 日子 | 拿掉這次重跑每日淨報酬最好的 k 天（＝`DAYS(rank_desc(r) > k)`） |
 | `DROP_BOTTOM_DAYS(k)` | 日子 | 拿掉最差的 k 天（＝`DAYS(rank_desc(-r) > k)`） |
 | `ONLY_DAYS(條件)` | 日子 | 只看條件成立的日子（＝`DAYS(條件)`），例 `ONLY_DAYS(regime > 0)` 只看多頭日 |
@@ -1883,10 +1972,10 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | `HELD_RET(run)`、`HELD_DAYS(run)` | 選股範圍條件裡的值 | run 每檔的持有報酬和（那條回測自己記在這檔上的每一段報酬加總：續抱日全日、隔天開盤成交日的隔夜或盤中段、觸價出場那一段；RATIO）、持有天數（收盤持有的天數，COUNT）。每檔一個值、每天相同，沒持有過＝0；不帶權重 |
 | `RETUNE(f)` | 分數 | 同一支公式、每個天數引數 ×f／100（往下取整）後重算的分數，在這次重跑的範圍裡排名。天數引數＝第 4 章標 N 的引數（日數、期數、`RWIN`／`EWIN`／`RWIN_PCT` 的期數）與演算法型的視窗 W；改完夾到那個算子的合法範圍（例 `ROLL_STD` 2..1,260、`EMA` 2..84、`RET_SKIP` 的 N 要大於 M），夾過的次數寫進檢驗紀錄 `clamped`。f 1..1000；`RETUNE(100)`＝不換 |
 | `RETUNE_AT(i, f)` | 分數 | 只改第 i 個天數引數（0 起，照公式的文字順序；同一個子式出現幾次都只算一個）。`prog.n_windows`＝這支公式天數引數的個數 |
-| `SCORE_NOISE(k, amp_bp)` | 分數 | 名次加雜訊再選，等於 `SCORE(ADD(CS_PCT(score), MUL(amp_bp / 10000, NOISE(k))))`。雜訊只由（這份檢驗的定義、run 的 id、k、日、檔）決定：同一份檢驗重跑逐位相同、k 不同是另一份 |
+| `SCORE_NOISE(k, amp_bp)` | 分數 | 名次加雜訊再選，等於 `SCORE(ADD(CS_PCT(score), MUL(amp_bp / 10000, NOISE(k))))`。雜訊只由（k、日、檔）決定，跟 `RANDOM_HALF`、`SHUFFLE`、`BOOTSTRAP` 同一套：重跑逐位相同、寫在哪份檢驗或哪個 run 都一樣，k 不同是另一份 |
 | `COST(算式)` | 成本 | 單邊成本（bp）換成算式的值；`cost` 代表原本的，例 `COST(cost * 3)`、`COST(cost * c.k)` |
 | `HOLD(hold && apx.IN_TOP(p))` | 做多門檻 | 名次百分位 ≥ p／200（180＝前 10%）才買；`hold` 代表原本的候選條件。p 可以寫 `RUN.變數`、`WINNER(…)` |
-| `WEIGHT(算式)` | 權重 | `weight` 代表原本那條。認 `apx.SHARE(apx.PICK(N, false[, 0[, 換手上限]]), 鍵)`：N＝最多幾檔（寫 `prog.max_positions`＝不換）、換手上限是比例（`0.3`）；鍵 `1` 等權、`apx.RANK_KEY()` 依名次、`apx.INV_VOL_KEY()` 依波動倒數、`weight` 照原本；`apx.CAP(單檔上限, …)` 單檔上限（比例，`0.1`＝一成）。例 `WEIGHT(apx.SHARE(apx.PICK(10, false), 1))`、`WEIGHT(apx.CAP(0.1, weight))` |
+| `WEIGHT(算式)` | 權重 | `weight` 代表原本那條。認 `apx.SHARE(apx.PICK(N, false[, 0[, 換手上限]]), 鍵)`：N＝最多幾檔（寫 `prog.max_positions`＝不換）、換手上限是比例（`0.3`）；鍵 `1` 等權、`apx.RANK_KEY()` 依名次、`INV_VOL_KEY(20, RET(1, close))` 依波動倒數、`weight` 照原本；`apx.CAP(單檔上限, …)` 單檔上限（比例，`0.1`＝一成）。例 `WEIGHT(apx.SHARE(apx.PICK(10, false), 1))`、`WEIGHT(apx.CAP(0.1, weight))` |
 | `PERIOD(起, 迄)`、`PERIOD(起, 迄, 段數)` | 區間 | 整支在日序號 [起, 迄) 重跑，部位在起點從空倉開始（不是只收那段的指標；只收那段寫 `ONLY_DAYS(day >= …)`）。可用 `env.first`（暖機後第一天）、`env.n_days`、`$參數`、這個 run 的 `vary` 變數；起訖用到 `win`（第幾段，0 起）＝每段跑一次，段數＝第三個引數（`n_windows`，最多 32） |
 | `ROLLING_OOS(is, oos, k[, mx])`、`ROLLING_IS(is, oos, k[, mx])` | 區間 | walk-forward 的樣本外／樣本內段：從最後一天起每 oos 天往前切、樣本內 is 天緊鄰其前、樣本內起點 ≥ 暖機，最早的一段 k＝0，多於 mx（預設 32）只留最晚的。k 寫 `win`＝每段跑一次（`WINNER` 取同一段）；寫 `RUN.k`＋`vary {"k":{"from":0,"to":"n_windows - 1"}}`＝vary 展開；寫數字＝只跑那一段。段數＝`ROLLING_N(is, oos[, mx])` |
 | `SPLIT(n, k[, mx])` | 區間 | 全期 [暖機, 末日) 等分 n 段的第 k 段；k 寫 `win`＝每段跑一次。段數＝`SPLIT_N(n[, mx])` |
@@ -1898,7 +1987,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 - 日子權重用小寫篩選語言；寫成大寫分數公式（`DAYS(TOP_K(R, 5))`）或一支策略一個數的名字（`ic_x1e4`）回 `E_CHECK_LANG`。保留函數跟展開式是同一個檢驗身分。
 - 算式裡可以寫 `$參數` 與這個 run 的 `vary` 變數（`RUN.變數`），代入整數後才算；`vary` 的值要是數字或 `$參數`，範圍的兩端也可以寫 `prog.n_windows`（例 `{"from":0,"to":"prog.n_windows - 1"}`：每支公式的成員數跟著它的天數個數走）。
 - 重新調參（`RETUNE`、`RETUNE_AT`）是分數變換的一種，同一個 run 裡永遠先套（改的是公式本身），再接 `SCORE` 類；寫在前面或後面是同一個變換。公式的天數不夠（沒有天數，或 `RETUNE_AT` 的 i ≥ `prog.n_windows`）時，那支公式這個檢驗不過，紀錄寫 `"error":"E_FORMULA_NO_WINDOW"`；用 `RETUNE` 類的檢驗紀錄多一欄 `clamped`。`vary` 範圍寫到 `prog.n_windows` 時分數變換照上限預先排 16 種，要跟別的分數變換一起開就收小，例 `"to":"MIN2(prog.n_windows, 4) - 1"`。
-- 一輪裡不同的選股範圍最多 2 種、不同的報酬變換最多 2 種、不同的分數變換最多 16 種、不同的換股日最多 32 種（同一個變換被幾個 run、幾個檢驗用到算一種；`ENTRY_DELAY(2)` 跟 `SCORE(LAG(2, score))` 是同一種）。
+- 一輪裡不同的選股範圍最多 2 種、不同的報酬變換最多 2 種、不同的分數變換最多 16 種、不同的換股日最多 32 種、不同的日子權重（`BOOTSTRAP` 等）最多 255 種，超過回 `E_RES_LIMIT`（同一個變換被幾個 run、幾個檢驗用到算一種；`ENTRY_DELAY(2)` 跟 `SCORE(LAG(2, score))` 是同一種）。
 - 引用前一次重跑（`HELD_RET`、`HELD_DAYS`、`DROP_*_HELD`）：被引用的 run 要先跑完，所以引用它的 run 自動排到下一階段（最多 4 階）；被引用的 run 不能帶 `vary` 或視窗、不能引用自己（`E_RUN_REF_SELF`）。範圍每支候選各算一次，一輪最多 16 種。
 - 舊的 `universe`、`ret` 兩個鍵與舊名（`universe.peer_a`、`universe.peer_b`、`universe.random_half`、`ret.peer_swap`、`ret.shuffle`）照收，等於寫在 `with` 裡。
 - 投組設定（`COST`、`HOLD`、`WEIGHT`）同一欄一個 run 只換一次，區間一個 run 只換一次（重複回 `E_WITH_TWICE`）。`WEIGHT`、`HOLD` 的引數照回測的 `weight`、`hold` 認（同一張形狀表）：`COST` 的算式、`apx.PICK` 的檔數、`apx.IN_TOP` 的門檻可以寫檢驗算式（`$參數`、`RUN.變數`、`prog.欄名`、`WINNER(…)`）；單檔上限、換手上限寫數字。
@@ -1949,7 +2038,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 
 - 一個檢驗的身分＝名字@版本＋正規化定義的 `content_hash`＋參數值＋那把尺（用到不帶尺的 `PEER_SWAP()`、`PEER_SIDE()`、`PEER_IDX()` 才算）＋種子 `val_alt_seed`＋用到的用戶變換名字@版本。
 - 檢驗紀錄（結果庫 `validation.json` 每支候選的 `checks`）在用戶檢驗、或變換帶引數時，`name`、`version` 後面多三欄：`id`（身分，16 位十六進位）、`uses`（用到的用戶變換名字@版本）、`seed`。內建 8 個的紀錄跟以前逐 byte 相同。
-- `env.n_checks_tried`＝這支候選在這個結果庫裡、這次搜尋之前跑過幾種不同的檢驗；`env.n_checks_pass`＝其中過了幾種。同一個身分跑幾次算一種、過過一次就算過；內建以名字@版本算；沒有結果庫時是 −1。內建檢驗都不讀它們。
+- `env.n_checks_tried`＝這支候選在這個結果庫裡、這次搜尋之前跑過幾種不同的檢驗；`env.n_checks_pass`＝其中過了幾種。同一個身分跑幾次算一種、過過一次就算過；內建以名字@版本算；沒有結果庫時是無效（沒有這個量）。內建檢驗都不讀它們。
 - 檢驗的重跑不是試驗、不進多重檢定的試驗數。要扣「同一支策略換很多種檢驗、過一個就收」，自己寫進 `pass`（例 `tried <= 3 && …`）。
 
 **第 2 步：要切時間就在 `with` 寫區間。**`ROLLING_IS(504, 126, win)`、`ROLLING_OOS(504, 126, win)`：從最後一天起每 126 天往前切一段、樣本內 504 天緊鄰在前，每段跑一次；`SPLIT(4, win)`：全期等分 4 段。舊寫法（頂層 `windows`＋`interval`）照收。
@@ -1960,16 +2049,16 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 
 **第 5 步：驗、存、用。**`stock_formula_help topic=validate document={…}` 驗（回每一個錯）→ `my_stock_strategies_change action=install document={…}` 存 → 回測或搜尋帶 `checks=["user.local.HALVES"]`；帶參數照定義檔 `params` 的順序寫在括號裡 `checks=["user.local.HALVES(3000)"]`。同一支策略最多 8 個檢驗。
 
-檢驗算式是整數（i64）：除以 0＝0；比較與邏輯回 0／1。
+檢驗算式的值是整數或比值：除以 0、% 0 → 無效（輸出記 null、檢驗不過）；比較與邏輯回 0／1。
 
 | 類 | 能寫的 |
 |---|---|
 | 值 | 數字、`$參數`、`env.NAME`、`prog.FIELD`、`RUN.FIELD`（某次重跑的指標，欄名同 11.1 的純量原子）、`RUN.VAR`（`vary` 的變數） |
 | 運算 | `+ - * / %`、比較、`&& \|\| !`、`?:` |
-| 函數 | `ABS(x)`、`MIN2(a, b)`、`MAX2(a, b)`（跟分數公式同名）、`SIGN(x)`（−1／0／1）、`KEEP_BP(變體, 原版)`（變體 ÷ 原版，萬分之一為單位，例 `KEEP_BP(swap.net_ret_1e6, base.net_ret_1e6)`） |
-| 聚合 | `COUNT` `SUM` `ALL` `ANY` `AMIN` `AMAX`（視窗維度優先，否則 `vary` 維度）、`FIRST` `LAST`、`NTH(expr, k)`（`vary` 的第 k 個，0 起）、`PCT(expr, q_bp)`（`vary` 維度由小到大的分位：第 ⌊(n − 1) × q_bp ÷ 10,000⌋ 個，0 起；q_bp 夾到 0..10,000，例 `PCT(bs.net_ret_1e6, 500)`＝第 5 百分位）、`WINNER(RUN, FIELD, VAR)`（那次重跑裡 FIELD 最大那組的變數值，用在另一次重跑的投組設定＝樣本內挑、樣本外用，例 `HOLD(hold && apx.IN_TOP(WINNER(is, net_ret_1e6, p)))`）、`n_windows` |
+| 函數 | `ABS(x)`、`MIN2(a, b)`、`MAX2(a, b)`（跟分數公式同名）、`SIGN(x)`（−1／0／1）、`KEEP_BP(變體, 原版)`（變體 ÷ 原版，萬分之一為單位，例 `KEEP_BP(swap.net_ret_1e6, base.net_ret_1e6)`；原版 0 → 無效）、`HAS(x)`（有值 1、無效 0；唯一看無效的函數，同篩選）、`FILTER(x, 條件)`（同篩選：條件有值且成立 → 成員、值＝x；有值且不成立 → 不是成員，聚合不收；條件無效 → 成員、值不知道） |
+| 聚合 | `COUNT` `SUM` `ALL` `ANY` `AMIN` `AMAX`（視窗維度優先，否則 `vary` 維度）、`FIRST` `LAST`、`NTH(expr, k)`（`vary` 的第 k 個，0 起）、`PCT(expr, q_bp)`（`vary` 維度由小到大的分位：第 ⌊(n − 1) × q_bp ÷ 10,000⌋ 個，0 起；q_bp 夾到 0..10,000，例 `PCT(bs.net_ret_1e6, 500)`＝第 5 百分位）、`WINNER(RUN, FIELD, VAR)`（那次重跑裡 FIELD 最大那組的變數值，用在另一次重跑的投組設定＝樣本內挑、樣本外用，例 `HOLD(hold && apx.IN_TOP(WINNER(is, net_ret_1e6, p)))`；有一組的 FIELD 無效 → 無效）、`LEN(x)`（成員有幾個，跟值無關；`vary` 有幾個值寫 `LEN(c.k)`）、`n_windows`。成員的值無效 → 結果無效，除非答案跟那一格無關：`FIRST` `LAST` `NTH` 只看那一個、`ALL` 有一個確定不成立就是 0、`ANY` 有一個確定成立就是 1；沒有成員：`COUNT` `SUM` `LEN` 0、`ALL` 1、`ANY` 0，其餘無效。只算有值的寫 `MEAN(FILTER(x, HAS(x)))`；沒值的放行寫 `ALL(!HAS(x) \|\| x > 0)` |
 | 舊寫法 | 小寫名字照收、身分照大寫寫法（同一份定義、同一個 `content_hash`）：`min(a, b)`＝`MIN2(a, b)`、`min(x)`＝`AMIN(x)`、`keep_bp(…)`＝`KEEP_BP(…)`…；`MIN(a, b, c)` 回錯附改法 `MIN2(MIN2(a, b), c)` |
-| `env` | `n_days`（面板日數）、`first`（暖機後第一天）、`n_symbols`、`peer_nn_corr_bp`（平均替身相關）、`peer_fallback_bp`、`peer_paired_bp`、`mt_dsr_bp`、`mt_ic_padj_bp`、`mt_n_eff_x100`、`ic_t_x100`、`net_ret_1e6`、`n_checks_tried`、`n_checks_pass`（檢驗帳，見上） |
+| `env` | `n_days`（面板日數）、`first`（暖機後第一天）、`n_symbols`、`peer_nn_corr_bp`（平均替身相關）、`peer_fallback_bp`、`peer_paired_bp`、`mt_dsr_bp`、`mt_ic_padj_bp`、`mt_n_eff_x100`、`ic_t_x100`、`net_ret_1e6`、`n_checks_tried`、`n_checks_pass`（檢驗帳，見上）。沒有這個量（沒開帳本的 `mt_*`、沒有結果庫的檢驗帳）＝無效 |
 
 | 白話 | `runs` → `outputs` → `pass` |
 |---|---|
@@ -2024,7 +2113,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 
 - 參數在前、輸入在後。前面的引數（引數個數 − 輸入個數）是參數，照宣告順序；缺的用預設。
 - 參數值要在宣告的 `min`..`max` 之內。
-- 輸入的單位要跟宣告的一樣（宣告 MONEY 的輸入也收 AMOUNT）；常數輸入照宣告的單位讀。
+- 輸入的單位要跟宣告的一樣（宣告 MONEY 的輸入是舊寫法，當 `X`：收任何數值單位）；常數輸入照宣告的單位讀。
 - 可帶版本：`user.local.RSI@1(42, close)`。不帶＝最新版；一個自訂函數引用另一個時，安裝當下記下被引用的版本，之後對方改版也不影響。
 - 自訂函數可以引用其他自訂函數，不能成環；展開深度上限 128 層。
 
@@ -2079,7 +2168,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 上限 | 算子 |
 |---|---|
 | 1,260（5 年） | `LAG`、`DIFF`、`WSUM`、`ROLL_MEAN`、`ROLL_MAX`、`ROLL_MIN`、`ROLL_STD`、`ROLL_RANK`、`WRANK`、`COUNT`、`FIRST_IN_WINDOW`、`WDROP` |
-| 252（1 年） | `RET`、`RET_SKIP`、`RVOL`、`PARK`、`GK`、`SKEW`、`KURT`、`ACORR`、`WSKEW`、`WKURT`、`WACORR`、`SLOPE`、`R2`、`MAXDD`、`DIST_HIGH`、`DIST_LOW`、`UP_STREAK`、`DOWN_STREAK`、`CORR`、`VOL_RATIO`、`AMIHUD`、`BETA`、`RESID_MOM`、`CS_REL_RET`、`WARG`、`WQUANT`、`WMAD`、`FN_YOY`、`FN_EGROW`、`FN_GM_CHG`、`FN_ACCRUAL`、`FN_DY`、`EV_EARN_DRIFT`、`EV_IDX_CHG` |
+| 252（1 年） | `RET`、`RET_SKIP`、`RVOL`、`PARK`、`GK`、`SKEW`、`KURT`、`ACORR`、`WSKEW`、`WKURT`、`WACORR`、`SLOPE`、`R2`、`MAXDD`、`DIST_HIGH`、`DIST_LOW`、`UP_STREAK`、`DOWN_STREAK`、`CORR`、`VOL_RATIO`、`AMIHUD`、`RESID_MOM`、`CS_REL_RET`、`WARG`、`WQUANT`、`WMAD`、`FN_YOY`、`FN_EGROW`、`FN_GM_CHG`、`FN_ACCRUAL`、`FN_DY`、`EV_EARN_DRIFT`、`EV_IDX_CHG` |
 | 250 | `CS_RANK_CHG`、`CS_RANK_MEAN`、`EV_POST_N`、`EV_DAYS_SINCE` |
 | 84 | `EMA`（暖機 3N−1） |
 | 756 | `SMOOTH` 的暖機步數 K |
@@ -2106,7 +2195,8 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 一般常數 | 定點後放得進 32 位（1e6 定點的單位約 ±2,147） |
 | 大常數 | 7 位有效數字（尾數 ≤ 8,388,607）× 10 的 0～12 次方；太精細的回錯 |
 | 常數的小數位 | 不超過該單位的定點精度（1e6 定點 6 位；整數單位 0 位） |
-| MONEY | 約 ±9.22 兆元；超過的總額欄讀成 AMOUNT（3.2） |
+| PRICE | 約 ±9.22 兆元／股 |
+| QTY、AMOUNT | 整數，約 ±9.22 × 10^18 股、元 |
 
 ### 13.5 其他
 
@@ -2115,10 +2205,10 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | `CORR_GROUP`／`CORR_SEED` 的點數（lookback ÷ step） | 20..1,024（quant 0：20..500） |
 | `CORR_SEED` 的種子數 | 1..64 |
 | 選股範圍逐檔列的代號 | 20 檔（整條條件合計） |
-| `exit_when`／`keep_when` 狀態葉的係數 | 絕對值 ≤ 100 |
+| 持股規則（`exit_when`、`keep_when`、`add_when`、`cut_when`）裡一段讀 `pos.*` 的算式 | 同時要記的中間值 ≤ 15 個（超過就拆成幾個比較用 `&&`、`\|\|` 接） |
 | 自訂函數格點 × 綁定 | 20,000 組 |
 | 門檻格點 `grid` | 投組規則的名字：基本格組數 × 門檻組數 ≤ 32,767；分數公式的名字：每個 1..256 個值、展開後最多 20,000 棵樹 |
-| 檢驗 | 一支策略 8 個檢驗；一個檢驗 8 次重跑、16 個輸出、32 段、16 組 `vary` |
+| 檢驗 | 一支策略 8 個檢驗；一個檢驗 8 次重跑、16 個輸出、32 段；一次重跑展開的成員（視窗段數 × `vary` 各變數的值數）最多 4,096 |
 | `rounds` | 1..1,000 |
 | 投組參數 | 第 9.2 節的值域 |
 
@@ -2137,12 +2227,12 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | `APX_UNKNOWN_COLUMN` | 面板沒有這一欄 | 用 `stock_formula_help topic=column` 查欄鍵；回應附最接近的欄名 |
 | `APX_UNKNOWN_NOUN` | 名字不是算子、別名，也不是已安裝的自訂函數 | 用 `stock_formula_help topic=noun query=…` 查；回應附最接近的名字。別家語言的名字與小寫的名字附照這條寫好的寫法、`user.*` 沒安裝的附安裝的定義檔形狀（2.7） |
 | `APX_UNKNOWN_PARAM` | `$名字` 沒宣告，或用在自訂函數的 body 以外 | `$參數` 要在 `params` 宣告，而且只能出現在 body |
-| `APX_UNIT_MISMATCH` | 單位不合（例 PRICE ＋ QTY、PRICE × QTY） | 兩邊換成同單位或不帶單位的數：`RATIO(a, b)`、`CS_PCT(x)`；成交金額用欄 `px.turnover` |
-| `APX_UNIT_MISMATCH` | 一邊 MONEY、一邊 AMOUNT | MONEY 那邊的總額欄寫成 `欄名:AMOUNT`；每股值不能跟它混用 |
+| `APX_UNIT_MISMATCH` | 單位不合（例 PRICE ＋ QTY、QTY × QTY） | 兩邊換成同單位或不帶單位的數：`RATIO(a, b)`、`CS_PCT(x)`；成交金額用欄 `px.turnover` |
+| `APX_UNIT_MISMATCH` | 一邊是價或每股值（PRICE）、一邊是公司總額（AMOUNT） | 每股值寫 `FN_PS(總額, shares)`；總額比市值寫 `RATIO(總額, fund.mktcap)` |
 | `APX_UNIT_MISMATCH` | `&&`、`\|\|`、`!`、`?:` 的條件不是 BOOL | 兩邊要是比較的結果；數字相乘寫 `*` |
 | `APX_UNIT_MISMATCH` | 欄名後面的 `:單位` 跟欄不一樣 | 拿掉，或改成欄的單位 |
 | `APX_UNIT_MISMATCH` | 代碼欄拿去做數學 | 代碼欄只能 `==`、`!=`、`in {…}` 或當群鍵 |
-| `APX_PARAM_RANGE` | 參數超出算子的範圍（例 `ROLL_STD(300, x)`） | 第 4 章各列的參數範圍；訊息帶合法範圍。`RET`、`DIST_HIGH`、`DIST_LOW`、`VOL_RATIO`、`FN_YOY` 的 N 在 253..1,260 時附同一個量的長視窗寫法（2.7） |
+| `APX_PARAM_RANGE` | 參數超出算子的範圍（例 `ROLL_STD(2000, x)`）；往回看的天數寫了負數（例 `LAG(-3, close)`，往後看） | 第 4 章各列的參數範圍；訊息帶合法範圍。`RET`、`DIST_HIGH`、`DIST_LOW`、`VOL_RATIO`、`FN_YOY` 的 N 在 253..1,260 時附同一個量的長視窗寫法（2.7）。負的天數：訊息講「會用到下單時還不知道的資料」，附事件日往回對齊的寫法 `MASK(LAG(k, 事件), RET(k, close))` 與持有天數 `hold_days`。超出範圍一律編不過，伺服器不夾到邊界、不換成別的長度 |
 | `APX_PARAM_TYPE` | 參數不是整數 | 參數寫整數；小數的倍數放進輸入（`0.5:RATIO`） |
 | `APX_ARITY` | 輸入不夠、引數太多、少了參數 | 參數在前、輸入在後；例 `ROLL_MEAN(20, close)` |
 | `APX_ARITY` | `LE`、`AND`、`IF`、`MIN`、`MAX`、`GPCT` 這些照收的寫法引數個數不對（2.5） | 訊息說要幾個，附寫法 |
@@ -2177,17 +2267,17 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | 代碼 | 什麼時候 | 怎麼改 |
 |---|---|---|
 | `E_NOT_BOOL` | 條件的結果不是 BOOL | 寫成比較：`close > 0`、`ROLL_MEAN(20, volume) > 1000000`、`industry in {24, 25}` |
-| `E_UNKNOWN_CODE` | 代碼欄沒有這個名字 | 產業寫代碼數字、交易所寫 `TW`／`TWO`、代號用雙引號 |
+| `E_UNKNOWN_CODE` | 代碼欄沒有這個名字（常見：寫了別的市場的代碼） | 照這個市場的代碼寫：台股產業寫代碼數字、交易所 `TW`／`TWO`；美股交易所 `XNAS`、`XNYS`…；代號用雙引號 |
 | `E_AMBIGUOUS_NAME` | 不帶前綴的欄名對到兩個以上的欄 | 寫完整欄名 |
-| `E_EMPTY_UNIVERSE` | 條件下每天都沒有股票，或平均每天不到 1 檔 | 放寬門檻；先看產業代碼與欄名 |
+| `E_EMPTY_UNIVERSE` | 選股範圍每天都是 0 檔 | 放寬門檻；先看產業代碼與欄名 |
 | `APX_INVALID_ARGUMENT` | 選股範圍逐檔列超過 20 檔代號 | 改用類別名詞（`!cls.FIN()`）或種子籃子 |
-| `E_NOT_MARKET_WIDE` | `rebalance_when`／`exposure` 同一天有兩個以上的值 | 只用每檔同值的東西：日曆、`idx.*`、`MKT_MEAN`、`EW_INDEX`；逐檔的條件放 `hold` |
+| `E_NOT_MARKET_WIDE` | `rebalance_when`／`exposure` 同一天有兩個以上的值 | 只用每檔同值的東西：日曆、`mkt.idx`、`MKT_MEAN`、`EW_INDEX`；逐檔的條件放 `hold` |
 | `E_NO_REBALANCE` | `rebalance_when` 整段期間沒有一天成立 | 檢查條件 |
 | `E_NO_WEIGHT` | `weight` 整段期間沒有一格是正數 | 權重要 > 0 的檔才會被持有 |
-| `E_POS_RULE` | `pos.*` 沒放在比較裡、不是一次式、另一邊不是常數或只看市場的算式；`pos.rank` 用在 `exit_when` | 照 9.5 的寫法規則；例 `pos.ret <= -0.08 \|\| pos.ret >= 0.2` |
+| `E_POS_RULE` | 沿日子看的函數吃了持股狀態、`LAG(2 以上, pos.*)`、`pos.rank` 不是單獨跟整數比或用在 `exit_when`、條件永遠成立或永遠不成立 | 照 9.5 的那一條規則；昨天的值寫 `LAG(1, …)`，例 `pos.ret < LAG(1, pos.ret) - 0.03` |
 | `E_RANGE` | `reentry_days` 不在 0..10,000；`group_cap` 不是正整數 | |
 | `E_POS_GROUP` | `group_by`、`group_cap` 只給了一個；`group_by` 用了 `pos.*` | 兩個一起給，例 `{"group_by":"CORR_GROUP(RET(1, close))","group_cap":3}`；群鍵只看當天的資料 |
-| `E_POS_SIZE` | 加減碼或帳戶層參數超出範圍或缺搭配（例 `size_init` 沒配 `add_when`、`gross_max` > 1 沒給 `margin_rate`） | 照 9.2 的值域與 9.5b 的例子 |
+| `E_POS_SIZE` | 加減碼或帳戶層參數超出範圍或缺搭配（例 `size_init` 沒配 `add_when`、`gross_max` > 1 沒給 `margin_rate`）；`weight` 寫死的倍數不在 1% 的格點上 | 照 9.2 的值域與 9.5b 的例子 |
 | `APX_INVALID_ARGUMENT` | 三選一的換股參數給了兩個；`weight` 與 `weighting` 都給 | 持有滿 N 天寫 `exit_when="pos.days >= N"` |
 | `APX_INVALID_ARGUMENT` | `portfolio` 裡有不認得的鍵 | 回應列出全部合法的參數名；寫成別的系統的鍵名（`stop_loss`、`top_n`…）時說這件事在這裡的參數與例子 |
 | `APX_CHECK_E_SCORE_COND_TIMES` | 分數的根是「條件 × 數值」 | 回應附整條改好的 `MASK(條件, 數值)` |
@@ -2205,6 +2295,7 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 | `E_ARITY`、`E_ARGS` | 引數個數不對 | |
 | `E_CYCLE` | 定義式互相引用成環 | |
 | `E_CHECK_STAGE` | `check.*` 用在 `screen_pick`／`grid_by`，或門檻用了 `check.*` 卻沒開檢驗 | 寫在門檻 `screen_gate`、`checks` 開那個檢驗 |
+| `E_NO_BENCH` | 門檻 `screen_gate`／`screen_pick`／`screen_admit` 用了大盤基準（序列 `b`、`apx.BEAT_B_ANN`、`apx.B_ANN`、`apx.EXCESS_B_ANN`、`apx.IR_B`、`apx.BETA_B`、`apx.YEARS_BEAT_B`），而面板沒有含息大盤欄 `mkt.idx_tr`：那一項每支候選都沒有值，計畫就回錯（不照跑一次注定 0 支） | 拿掉那一項，或改不靠大盤欄的寫法（例 `apx.ANN_RET >= 0.15`）；面板補上大盤欄後原寫法照收 |
 | `E_EVOLVE_ARGS` | `apx.EVOLVE` 不是一個引數 | 回應的 `fix` 是改好的整條（兩個以上各包一個） |
 | `E_EVOLVE_EMPTY` | `apx.EVOLVE` 包的東西沒有鄰居（BOOL 常數、0、面板沒有第二個同類的欄、格點上回看守得住的只有它） | 回應的 `fix` 是往外包一層的整條 |
 | `E_EVOLVE_WINDOW` | 投組規則裡包了算子的參數（要看幾天） | 回應的 `fix` 是 `$名字`＋`grid` 的寫法；或把那個視窗搬進分數公式 |
@@ -2233,11 +2324,11 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 
 ### 16.1 選股範圍（U）
 
-**U02　只看上櫃，而且排除上市不到 60 個交易日的新股**
+**U03　過去 20 天每天都有成交、20 日均量超過 500 張的才選**
 
 ```json
 {"trees_from": "formulas", "formulas": ["RET(60, close)"],
- "universe": "market == TWO && cal.tday_idx - list.tday_idx >= 60"}
+ "universe": "COUNT(20, volume > 0) >= 20 && ROLL_MEAN(20, volume) > 500000"}
 ```
 
 **U12　收盤剛站上 250 日均線（20 天內才站上）的才選**
@@ -2363,13 +2454,6 @@ plan 回 `effective.portfolio.group_by.stats`：`cap`、選股範圍內每天的
 ```
 
 ### 16.6 奇怪的策略（W）
-
-**W01　只買股號尾數跟今天日期尾數相同的股票**
-
-```json
-{"trees_from": "formulas", "formulas": ["RET(60, close)"],
- "universe": "sym.code_num % 10 == MDAY() % 10"}
-```
 
 **W08　星期一跌最多的股票，星期二買**
 

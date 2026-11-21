@@ -63,18 +63,6 @@ VQL 做四件事，範例照這四件找：
 
 ## 選股範圍
 
-**U01　上市滿兩年的股票才選**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "cal.tday_idx - list.tday_idx >= 500"}
-```
-
-**U02　只看上櫃，而且排除上市不到 60 個交易日的新股**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "market == TWO && cal.tday_idx - list.tday_idx >= 60"}
-```
-
 **U03　過去 20 天每天都有成交、20 日均量超過 500 張的才選**
 
 ```json
@@ -85,12 +73,6 @@ VQL 做四件事，範例照這四件找：
 
 ```json
 {"formulas": ["RET(60, close)"], "universe": "CS_PCT(fund.mktcap) >= 0.3 && CS_PCT(fund.mktcap) <= 0.7"}
-```
-
-**U05　資本額介於 10 億到 50 億元之間**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "capital >= 1000000000:MONEY && capital <= 5000000000:MONEY"}
 ```
 
 **U06　20 日平均週轉率在 1%～5% 之間**
@@ -108,7 +90,7 @@ VQL 做四件事，範例照這四件找：
 **U08　只在我給的 10 檔自選股裡面挑**
 
 ```json
-{"formulas": ["RET(60, close)"], "universe": "symbol in {\"2330\", \"2317\", \"2454\", \"3711\", \"1106\", \"1107\", \"1108\", \"1109\", \"1110\", \"1111\"}"}
+{"formulas": ["RET(60, close)"], "universe": "symbol in {\"2330\", \"2317\", \"2454\", \"3711\", \"2382\", \"2886\", \"2881\", \"2882\", \"2891\", \"3231\"}"}
 ```
 
 **U09　跟台積電、聯發科、日月光三檔過去一年日報酬相關性平均超過 0.5 的股票才選**
@@ -141,28 +123,10 @@ VQL 做四件事，範例照這四件找：
 {"formulas": ["RET(60, close)"], "universe": "RATIO(margin_bal, margin_limit) < 0.3 && RATIO(short_bal, margin_bal) > 0.1"}
 ```
 
-**U14　排除過去 60 天出現過漲停或跌停（單日 ±9.5%）的股票**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "COUNT(60, raw.close >= raw.limit_up || raw.close <= raw.limit_down) == 0"}
-```
-
-**U15　排除全額交割股、處置股、注意股**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "!full_delivery && !disposition && !attention"}
-```
-
 **U16　只選市值前 30%，但不要台積電、鴻海**
 
 ```json
 {"formulas": ["RET(60, close)"], "universe": "CS_PCT(fund.mktcap) >= 0.7 && !(symbol in {\"2330\", \"2317\"})"}
-```
-
-**U17　最近 5 天沒有發布重大訊息的股票才選**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "WSUM(5, news.major_cnt) == 0"}
 ```
 
 **U18　只選外資已經連買 3 天以上的股票**
@@ -287,12 +251,6 @@ VQL 做四件事，範例照這四件找：
 {"formulas": ["ADD(ADD(CS_PCT(FN_EP(eps, close)), CS_PCT(FN_ROE(net_income, equity))), CS_PCT(RET_SKIP(252, 21, close)))"]}
 ```
 
-**R16　離上市以來最高價的距離，越近越前**
-
-```json
-{"formulas": ["RATIO(close, SCANMAX(VALID(list.date) && !FILL(LAG(1, VALID(list.date)), 0:BOOL), FILL(close, 0:PRICE)))"]}
-```
-
 **R17　自己組 14 日 RSI，越低越前**
 
 ```json
@@ -317,12 +275,6 @@ VQL 做四件事，範例照這四件找：
 {"formulas": ["DIFF(60, foreign_ratio)"]}
 ```
 
-**R20　千張大戶持股比這週增加、而且股東人數減少，照大戶持股增幅排**
-
-```json
-{"formulas": ["MASK(RWIN(1, 7, tdcc_big1000_pct) > 0 && RWIN(1, 7, tdcc_people) < 0, RWIN(1, 7, tdcc_big1000_pct))"]}
-```
-
 **R21　低本益比，但只在同產業裡比（產業內本益比倒數百分位）**
 
 ```json
@@ -333,12 +285,6 @@ VQL 做四件事，範例照這四件找：
 
 ```json
 {"formulas": ["DIFF(250, RATIO(close, ROLL_MEAN(1260, close)))"], "config": {"lookback_div": 2}}
-```
-
-**R23　發布重大訊息後 3 天的漲幅排名**
-
-```json
-{"formulas": ["MASK(LAG(3, news.major_cnt) > 0, RET(3, close))"]}
 ```
 
 **R24　強勢產業的股票優先，同一個產業裡市值大的先選（分數一樣時的第二排序）**
@@ -475,12 +421,6 @@ VQL 做四件事，範例照這四件找：
 {"formulas": ["MASK(VOL_RATIO(20, volume) >= 3 && COUNT(20, LAG(1, VOL_RATIO(20, volume) >= 3)) == 0 && COUNT(120, VOL_RATIO(20, volume) >= 3) >= 2, VOL_RATIO(20, volume))"]}
 ```
 
-**H06　當沖比（當沖量 ÷ 成交量）突然飆高的**
-
-```json
-{"formulas": ["SUB(RATIO(dt_vol, volume), ROLL_MEAN(20, RATIO(dt_vol, volume)))"]}
-```
-
 **H07　融資餘額 5 日暴增但股價沒漲（散戶追不動）**
 
 ```json
@@ -491,12 +431,6 @@ VQL 做四件事，範例照這四件找：
 
 ```json
 {"formulas": ["MASK(FIRST_IN_WINDOW(11, trust_net > 0), RATIO(trust_net, volume))"]}
-```
-
-**H09　當天發布 3 則以上重大訊息的股票，照量比排**
-
-```json
-{"formulas": ["MASK(news.major_cnt >= 3, VOL_RATIO(20, volume))"]}
 ```
 
 ## 回測
@@ -522,7 +456,7 @@ VQL 做四件事，範例照這四件找：
 **B04　依全市場 20 日波動反比調整持股（波動越大持股越少，最多滿倉）**
 
 ```json
-{"formulas": ["RET(60, close)"], "portfolio": {"max_positions": 10, "rebalance_days": 21, "exposure": "MIN2(RATIO(0.01:RATIO, ROLL_STD(20, FILL(RATIO(GSUM(0, LOGR(close, LAG(1, close))), GSUM(0, MASK(VALID(LOGR(close, LAG(1, close))), 1:RATIO))), 0:RATIO))), 1:RATIO)"}}
+{"formulas": ["RET(60, close)"], "portfolio": {"max_positions": 10, "rebalance_days": 21, "exposure": "MIN2(RATIO(0.01:RATIO, ROLL_STD(20, FILL(MKT_MEAN(LOGR(close, LAG(1, close))), 0:RATIO))), 1:RATIO)"}}
 ```
 
 **B05　等權大盤從一年高點回落超過 15% 時只持有三成**
@@ -947,12 +881,6 @@ VQL 做四件事，範例照這四件找：
 
 ## 奇怪的策略
 
-**W01　只買股號尾數跟今天日期尾數相同的股票**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "sym.code_num % 10 == MDAY() % 10"}
-```
-
 **W02　上個月漲最多的那個產業裡，這個月量縮最多的股票**
 
 ```json
@@ -1053,4 +981,22 @@ VQL 做四件事，範例照這四件找：
 
 ```json
 {"formulas": ["MASK(close > GQUANT(50, 1, close), RET(20, close) - GQUANT(50, 1, RET(20, close)))"]}
+```
+
+**W19　突破 60 日新高當作進場，收盤價比進場以來平均收盤價高出最多的**
+
+```json
+{"formulas": ["RATIO(close, SCANMEAN(close > ROLL_MAX(60, LAG(1, close)), close)) - 1"]}
+```
+
+**W20　創一年新高以來的平均成交量，比創新高前 20 日均量放大最多的**
+
+```json
+{"formulas": ["RATIO(SCANMEAN(close >= ROLL_MAX(250, close), volume), LATCH(close >= ROLL_MAX(250, close), LAG(1, ROLL_MEAN(20, volume))))"]}
+```
+
+**W21　突破 60 日新高當作進場，進場以來每天漲跌波動最小的**
+
+```json
+{"formulas": ["NEG(SCANSTD(close > ROLL_MAX(60, LAG(1, close)), RET(1, close)))"]}
 ```

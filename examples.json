@@ -1,29 +1,7 @@
 {
  "schema": "vql.examples.v1",
- "count": 157,
+ "count": 148,
  "items": [
-  {
-   "id": "U01",
-   "zh": "上市滿兩年的股票才選",
-   "en": "Only stocks listed for at least two years",
-   "args": {
-    "formulas": [
-     "RET(60, close)"
-    ],
-    "universe": "cal.tday_idx - list.tday_idx >= 500"
-   }
-  },
-  {
-   "id": "U02",
-   "zh": "只看上櫃，而且排除上市不到 60 個交易日的新股",
-   "en": "OTC (TPEx) stocks only, excluding new listings under 60 trading days",
-   "args": {
-    "formulas": [
-     "RET(60, close)"
-    ],
-    "universe": "market == TWO && cal.tday_idx - list.tday_idx >= 60"
-   }
-  },
   {
    "id": "U03",
    "zh": "過去 20 天每天都有成交、20 日均量超過 500 張的才選",
@@ -44,17 +22,6 @@
      "RET(60, close)"
     ],
     "universe": "CS_PCT(fund.mktcap) >= 0.3 && CS_PCT(fund.mktcap) <= 0.7"
-   }
-  },
-  {
-   "id": "U05",
-   "zh": "資本額介於 10 億到 50 億元之間",
-   "en": "Paid-in capital between 1 and 5 billion TWD",
-   "args": {
-    "formulas": [
-     "RET(60, close)"
-    ],
-    "universe": "capital >= 1000000000:MONEY && capital <= 5000000000:MONEY"
    }
   },
   {
@@ -88,7 +55,7 @@
     "formulas": [
      "RET(60, close)"
     ],
-    "universe": "symbol in {\"2330\", \"2317\", \"2454\", \"3711\", \"1106\", \"1107\", \"1108\", \"1109\", \"1110\", \"1111\"}"
+    "universe": "symbol in {\"2330\", \"2317\", \"2454\", \"3711\", \"2382\", \"2886\", \"2881\", \"2882\", \"2891\", \"3231\"}"
    }
   },
   {
@@ -147,28 +114,6 @@
    }
   },
   {
-   "id": "U14",
-   "zh": "排除過去 60 天出現過漲停或跌停（單日 ±9.5%）的股票",
-   "en": "Exclude stocks that closed at limit up or limit down in the past 60 days",
-   "args": {
-    "formulas": [
-     "RET(60, close)"
-    ],
-    "universe": "COUNT(60, raw.close >= raw.limit_up || raw.close <= raw.limit_down) == 0"
-   }
-  },
-  {
-   "id": "U15",
-   "zh": "排除全額交割股、處置股、注意股",
-   "en": "Exclude full-delivery, disposition and attention stocks",
-   "args": {
-    "formulas": [
-     "RET(60, close)"
-    ],
-    "universe": "!full_delivery && !disposition && !attention"
-   }
-  },
-  {
    "id": "U16",
    "zh": "只選市值前 30%，但不要台積電、鴻海",
    "en": "Top 30% by market cap, but without TSMC and Hon Hai",
@@ -177,17 +122,6 @@
      "RET(60, close)"
     ],
     "universe": "CS_PCT(fund.mktcap) >= 0.7 && !(symbol in {\"2330\", \"2317\"})"
-   }
-  },
-  {
-   "id": "U17",
-   "zh": "最近 5 天沒有發布重大訊息的股票才選",
-   "en": "Only stocks with no material announcement in the past 5 days",
-   "args": {
-    "formulas": [
-     "RET(60, close)"
-    ],
-    "universe": "WSUM(5, news.major_cnt) == 0"
    }
   },
   {
@@ -396,16 +330,6 @@
    }
   },
   {
-   "id": "R16",
-   "zh": "離上市以來最高價的距離，越近越前",
-   "en": "Distance from the highest price since listing; closer ranks higher",
-   "args": {
-    "formulas": [
-     "RATIO(close, SCANMAX(VALID(list.date) && !FILL(LAG(1, VALID(list.date)), 0:BOOL), FILL(close, 0:PRICE)))"
-    ]
-   }
-  },
-  {
    "id": "R17",
    "zh": "自己組 14 日 RSI，越低越前",
    "en": "A self-built 14-day RSI, lower ranks higher",
@@ -461,16 +385,6 @@
    }
   },
   {
-   "id": "R20",
-   "zh": "千張大戶持股比這週增加、而且股東人數減少，照大戶持股增幅排",
-   "en": "Holders of 1,000+ lots up this week while the number of shareholders fell, ranked by the rise of large holders",
-   "args": {
-    "formulas": [
-     "MASK(RWIN(1, 7, tdcc_big1000_pct) > 0 && RWIN(1, 7, tdcc_people) < 0, RWIN(1, 7, tdcc_big1000_pct))"
-    ]
-   }
-  },
-  {
    "id": "R21",
    "zh": "低本益比，但只在同產業裡比（產業內本益比倒數百分位）",
    "en": "Low P/E, compared only within the same industry",
@@ -491,16 +405,6 @@
     "config": {
      "lookback_div": 2
     }
-   }
-  },
-  {
-   "id": "R23",
-   "zh": "發布重大訊息後 3 天的漲幅排名",
-   "en": "Rank by the 3-day return after a material announcement",
-   "args": {
-    "formulas": [
-     "MASK(LAG(3, news.major_cnt) > 0, RET(3, close))"
-    ]
    }
   },
   {
@@ -819,16 +723,6 @@
    }
   },
   {
-   "id": "H06",
-   "zh": "當沖比（當沖量 ÷ 成交量）突然飆高的",
-   "en": "Day-trading share (day-trade volume / volume) jumping suddenly",
-   "args": {
-    "formulas": [
-     "SUB(RATIO(dt_vol, volume), ROLL_MEAN(20, RATIO(dt_vol, volume)))"
-    ]
-   }
-  },
-  {
    "id": "H07",
    "zh": "融資餘額 5 日暴增但股價沒漲（散戶追不動）",
    "en": "Margin balance up sharply over 5 days while the price did not rise",
@@ -845,16 +739,6 @@
    "args": {
     "formulas": [
      "MASK(FIRST_IN_WINDOW(11, trust_net > 0), RATIO(trust_net, volume))"
-    ]
-   }
-  },
-  {
-   "id": "H09",
-   "zh": "當天發布 3 則以上重大訊息的股票，照量比排",
-   "en": "Stocks with 3 or more material announcements today, ranked by volume ratio",
-   "args": {
-    "formulas": [
-     "MASK(news.major_cnt >= 3, VOL_RATIO(20, volume))"
     ]
    }
   },
@@ -912,7 +796,7 @@
     "portfolio": {
      "max_positions": 10,
      "rebalance_days": 21,
-     "exposure": "MIN2(RATIO(0.01:RATIO, ROLL_STD(20, FILL(RATIO(GSUM(0, LOGR(close, LAG(1, close))), GSUM(0, MASK(VALID(LOGR(close, LAG(1, close))), 1:RATIO))), 0:RATIO))), 1:RATIO)"
+     "exposure": "MIN2(RATIO(0.01:RATIO, ROLL_STD(20, FILL(MKT_MEAN(LOGR(close, LAG(1, close))), 0:RATIO))), 1:RATIO)"
     }
    }
   },
@@ -1814,17 +1698,6 @@
    }
   },
   {
-   "id": "W01",
-   "zh": "只買股號尾數跟今天日期尾數相同的股票",
-   "en": "Only stocks whose code ends with the same digit as today's date",
-   "args": {
-    "formulas": [
-     "RET(60, close)"
-    ],
-    "universe": "sym.code_num % 10 == MDAY() % 10"
-   }
-  },
-  {
    "id": "W02",
    "zh": "上個月漲最多的那個產業裡，這個月量縮最多的股票",
    "en": "In last month's best industry, the stocks whose volume shrank most this month",
@@ -2000,6 +1873,36 @@
    "args": {
     "formulas": [
      "MASK(close > GQUANT(50, 1, close), RET(20, close) - GQUANT(50, 1, RET(20, close)))"
+    ]
+   }
+  },
+  {
+   "id": "W19",
+   "zh": "突破 60 日新高當作進場，收盤價比進場以來平均收盤價高出最多的",
+   "en": "Taking a new 60-day high as the entry, the close furthest above the average close since entry",
+   "args": {
+    "formulas": [
+     "RATIO(close, SCANMEAN(close > ROLL_MAX(60, LAG(1, close)), close)) - 1"
+    ]
+   }
+  },
+  {
+   "id": "W20",
+   "zh": "創一年新高以來的平均成交量，比創新高前 20 日均量放大最多的",
+   "en": "Average volume since a new one-year high, most expanded against the 20-day average volume before that high",
+   "args": {
+    "formulas": [
+     "RATIO(SCANMEAN(close >= ROLL_MAX(250, close), volume), LATCH(close >= ROLL_MAX(250, close), LAG(1, ROLL_MEAN(20, volume))))"
+    ]
+   }
+  },
+  {
+   "id": "W21",
+   "zh": "突破 60 日新高當作進場，進場以來每天漲跌波動最小的",
+   "en": "Taking a new 60-day high as the entry, the steadiest daily moves since entry (lowest standard deviation)",
+   "args": {
+    "formulas": [
+     "NEG(SCANSTD(close > ROLL_MAX(60, LAG(1, close)), RET(1, close)))"
     ]
    }
   },

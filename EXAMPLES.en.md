@@ -63,18 +63,6 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 
 ## Stock pool
 
-**U01　Only stocks listed for at least two years**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "cal.tday_idx - list.tday_idx >= 500"}
-```
-
-**U02　OTC (TPEx) stocks only, excluding new listings under 60 trading days**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "market == TWO && cal.tday_idx - list.tday_idx >= 60"}
-```
-
 **U03　Traded every day for the past 20 days, with 20-day average volume above 500 lots**
 
 ```json
@@ -85,12 +73,6 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 
 ```json
 {"formulas": ["RET(60, close)"], "universe": "CS_PCT(fund.mktcap) >= 0.3 && CS_PCT(fund.mktcap) <= 0.7"}
-```
-
-**U05　Paid-in capital between 1 and 5 billion TWD**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "capital >= 1000000000:MONEY && capital <= 5000000000:MONEY"}
 ```
 
 **U06　20-day average turnover rate between 1% and 5%**
@@ -108,7 +90,7 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 **U08　Pick only from my own list of 10 stocks**
 
 ```json
-{"formulas": ["RET(60, close)"], "universe": "symbol in {\"2330\", \"2317\", \"2454\", \"3711\", \"1106\", \"1107\", \"1108\", \"1109\", \"1110\", \"1111\"}"}
+{"formulas": ["RET(60, close)"], "universe": "symbol in {\"2330\", \"2317\", \"2454\", \"3711\", \"2382\", \"2886\", \"2881\", \"2882\", \"2891\", \"3231\"}"}
 ```
 
 **U09　Only stocks whose daily returns over the past year correlate above 0.5 on average with TSMC, MediaTek and ASE**
@@ -141,28 +123,10 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 {"formulas": ["RET(60, close)"], "universe": "RATIO(margin_bal, margin_limit) < 0.3 && RATIO(short_bal, margin_bal) > 0.1"}
 ```
 
-**U14　Exclude stocks that closed at limit up or limit down in the past 60 days**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "COUNT(60, raw.close >= raw.limit_up || raw.close <= raw.limit_down) == 0"}
-```
-
-**U15　Exclude full-delivery, disposition and attention stocks**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "!full_delivery && !disposition && !attention"}
-```
-
 **U16　Top 30% by market cap, but without TSMC and Hon Hai**
 
 ```json
 {"formulas": ["RET(60, close)"], "universe": "CS_PCT(fund.mktcap) >= 0.7 && !(symbol in {\"2330\", \"2317\"})"}
-```
-
-**U17　Only stocks with no material announcement in the past 5 days**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "WSUM(5, news.major_cnt) == 0"}
 ```
 
 **U18　Only stocks with foreign investors net buying for 3 or more days in a row**
@@ -287,12 +251,6 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 {"formulas": ["ADD(ADD(CS_PCT(FN_EP(eps, close)), CS_PCT(FN_ROE(net_income, equity))), CS_PCT(RET_SKIP(252, 21, close)))"]}
 ```
 
-**R16　Distance from the highest price since listing; closer ranks higher**
-
-```json
-{"formulas": ["RATIO(close, SCANMAX(VALID(list.date) && !FILL(LAG(1, VALID(list.date)), 0:BOOL), FILL(close, 0:PRICE)))"]}
-```
-
 **R17　A self-built 14-day RSI, lower ranks higher**
 
 ```json
@@ -317,12 +275,6 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 {"formulas": ["DIFF(60, foreign_ratio)"]}
 ```
 
-**R20　Holders of 1,000+ lots up this week while the number of shareholders fell, ranked by the rise of large holders**
-
-```json
-{"formulas": ["MASK(RWIN(1, 7, tdcc_big1000_pct) > 0 && RWIN(1, 7, tdcc_people) < 0, RWIN(1, 7, tdcc_big1000_pct))"]}
-```
-
 **R21　Low P/E, compared only within the same industry**
 
 ```json
@@ -333,12 +285,6 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 
 ```json
 {"formulas": ["DIFF(250, RATIO(close, ROLL_MEAN(1260, close)))"], "config": {"lookback_div": 2}}
-```
-
-**R23　Rank by the 3-day return after a material announcement**
-
-```json
-{"formulas": ["MASK(LAG(3, news.major_cnt) > 0, RET(3, close))"]}
 ```
 
 **R24　Stocks of strong industries first; within one industry the larger market cap first (second sort key for ties)**
@@ -475,12 +421,6 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 {"formulas": ["MASK(VOL_RATIO(20, volume) >= 3 && COUNT(20, LAG(1, VOL_RATIO(20, volume) >= 3)) == 0 && COUNT(120, VOL_RATIO(20, volume) >= 3) >= 2, VOL_RATIO(20, volume))"]}
 ```
 
-**H06　Day-trading share (day-trade volume / volume) jumping suddenly**
-
-```json
-{"formulas": ["SUB(RATIO(dt_vol, volume), ROLL_MEAN(20, RATIO(dt_vol, volume)))"]}
-```
-
 **H07　Margin balance up sharply over 5 days while the price did not rise**
 
 ```json
@@ -491,12 +431,6 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 
 ```json
 {"formulas": ["MASK(FIRST_IN_WINDOW(11, trust_net > 0), RATIO(trust_net, volume))"]}
-```
-
-**H09　Stocks with 3 or more material announcements today, ranked by volume ratio**
-
-```json
-{"formulas": ["MASK(news.major_cnt >= 3, VOL_RATIO(20, volume))"]}
 ```
 
 ## Backtest
@@ -522,7 +456,7 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 **B04　Scale exposure by the inverse of 20-day market volatility (more volatile, less invested; at most fully invested)**
 
 ```json
-{"formulas": ["RET(60, close)"], "portfolio": {"max_positions": 10, "rebalance_days": 21, "exposure": "MIN2(RATIO(0.01:RATIO, ROLL_STD(20, FILL(RATIO(GSUM(0, LOGR(close, LAG(1, close))), GSUM(0, MASK(VALID(LOGR(close, LAG(1, close))), 1:RATIO))), 0:RATIO))), 1:RATIO)"}}
+{"formulas": ["RET(60, close)"], "portfolio": {"max_positions": 10, "rebalance_days": 21, "exposure": "MIN2(RATIO(0.01:RATIO, ROLL_STD(20, FILL(MKT_MEAN(LOGR(close, LAG(1, close))), 0:RATIO))), 1:RATIO)"}}
 ```
 
 **B05　Hold only 30% when the equal-weight market is more than 15% below its one-year high**
@@ -947,12 +881,6 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 
 ## Odd strategies
 
-**W01　Only stocks whose code ends with the same digit as today's date**
-
-```json
-{"formulas": ["RET(60, close)"], "universe": "sym.code_num % 10 == MDAY() % 10"}
-```
-
 **W02　In last month's best industry, the stocks whose volume shrank most this month**
 
 ```json
@@ -1053,4 +981,22 @@ Validate (`stock_formula_help topic=validate`), then install the user definition
 
 ```json
 {"formulas": ["MASK(close > GQUANT(50, 1, close), RET(20, close) - GQUANT(50, 1, RET(20, close)))"]}
+```
+
+**W19　Taking a new 60-day high as the entry, the close furthest above the average close since entry**
+
+```json
+{"formulas": ["RATIO(close, SCANMEAN(close > ROLL_MAX(60, LAG(1, close)), close)) - 1"]}
+```
+
+**W20　Average volume since a new one-year high, most expanded against the 20-day average volume before that high**
+
+```json
+{"formulas": ["RATIO(SCANMEAN(close >= ROLL_MAX(250, close), volume), LATCH(close >= ROLL_MAX(250, close), LAG(1, ROLL_MEAN(20, volume))))"]}
+```
+
+**W21　Taking a new 60-day high as the entry, the steadiest daily moves since entry (lowest standard deviation)**
+
+```json
+{"formulas": ["NEG(SCANSTD(close > ROLL_MAX(60, LAG(1, close)), RET(1, close)))"]}
 ```
